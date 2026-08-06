@@ -27,12 +27,43 @@ streamlit run streamlit_app.py
 
 `streamlit_app.py` is also the Streamlit Community Cloud entry point.
 
-## Demo Scenarios
+## Page Layout
 
-- Demo A: 30% discount, automatic approval
-- Demo B: 40% discount, manager approval
+The main page is conversation-first and renders vertically:
 
-Both scenarios are available as buttons at the top of the page.
+1. Header
+2. Sales conversation workspace (full width)
+3. Chat input
+4. Contextual quick replies
+5. Configuration summary
+6. Quotation preview (full width, editable Quantity and Quotation Unit Price)
+7. Discount approval
+8. Output actions
+
+The expanded sidebar holds the workspace controls: `New quotation`, the
+workflow progress (Requirements → Configuration → Quotation → Approval), the
+current draft summary, collapsed example requests and the system scope.
+
+## Free Input Handling
+
+- Greetings such as "I want to try." get a short invitation instead of a
+  noisy recommendation.
+- Missing information is requested one question at a time: customer, region,
+  currency, main product and then discount rate.
+- Quick reply buttons are converted to natural language and sent through the
+  normal parser.
+- Products outside the supported price book (DRX Compass, DRX Revolution,
+  DRX Rise) never produce a quotation; the assistant asks the presenter to
+  pick a supported system instead.
+
+## Example Requests
+
+Three neutral scenarios are available in the collapsed `Example requests`
+section of the sidebar and behave exactly like typed user input:
+
+- Hospital room upgrade
+- Mobile imaging requirement
+- Multi-system rollout
 
 ## Tests
 
@@ -42,6 +73,8 @@ python -m compileall app streamlit_app.py
 python scripts/smoke_test_demo.py
 ```
 
+`tests/test_streamlit_presentation.py` covers the presentation helpers and the
+multi-turn free-input flows without starting a browser.
 `scripts/smoke_test_demo.py` verifies Demo A, Demo B and the "per system"
 quantity scenario without starting a browser.
 
@@ -126,6 +159,7 @@ quotation_snapshot.json  Synthetic product snapshot used by the demo
 requirements.txt         Streamlit demo dependencies
 requirements-full.txt    Full dependencies including the legacy FastAPI stack
 streamlit_app.py         Streamlit demo entry point
+.streamlit/config.toml   Streamlit theme configuration
 ```
 
 ## Current Limitations

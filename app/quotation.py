@@ -1060,6 +1060,14 @@ def _configuration_description(
     return "; ".join(parts)
 
 
+def is_supported_main_product(main_product: str) -> bool:
+    """Return True when the text matches a system in ``MAIN_PRODUCT_PRICE_BOOK``."""
+    text = str(main_product or "").strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern, _, _, _ in MAIN_PRODUCT_PRICE_BOOK)
+
+
 def _main_product_price(main_product: str) -> tuple[str, str, float]:
     for pattern, code, description, price in MAIN_PRODUCT_PRICE_BOOK:
         if pattern.search(main_product):
