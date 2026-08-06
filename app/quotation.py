@@ -970,7 +970,7 @@ DETECTOR_ACCESSORY_NAMES = ("Wireless Detector", "Focus Detector")
 
 # "per system" repeats the accessory for every main system in the configuration.
 PER_SYSTEM_RE = re.compile(
-    r"^\s*(?:,)?\s*(?:per|for)\s+(?:each|every)?\s*(?:main\s+)?system\b",
+    r"^[\s,]*(?:per|for)\s+(?:(?:each|every)\s+)?(?:main\s+)?system\b",
     re.IGNORECASE,
 )
 PER_SYSTEM_LOOKAHEAD = 32
