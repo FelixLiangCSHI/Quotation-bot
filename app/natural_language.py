@@ -21,6 +21,26 @@ DISCOUNT_PERCENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A percentage only counts as a discount when one of these markers sits next to
+# it. This keeps payment terms and taxes out of the discount rate.
+DISCOUNT_MARKER_RE = re.compile(
+    r"(?<![a-z])(?:discount|discounted|off|rebate)(?![a-z])|折扣|优惠|减价",
+    re.IGNORECASE,
+)
+NON_DISCOUNT_MARKER_RE = re.compile(
+    r"(?<![a-z])(?:deposit|down\s*payment|downpayment|prepayment|tax|vat|gst|"
+    r"installation|commissioning|completion|delivery|retention|milestone|"
+    r"advance|interest|shipping)(?![a-z])|定金|首付|税|安装|尾款",
+    re.IGNORECASE,
+)
+BARE_PERCENT_RE = re.compile(
+    r"^\W*(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)\W*$",
+    re.IGNORECASE,
+)
+
+# Characters scanned around a percentage when looking for context markers.
+DISCOUNT_CONTEXT_WINDOW = 32
+
 STOP_WORDS = {
     "a",
     "an",
@@ -98,11 +118,63 @@ def parse_quote_request(text: str) -> QuoteRequest:
     )
 
 
-def parse_discount_rate(text: str) -> float | None:
-    matches = DISCOUNT_PERCENT_RE.findall(text)
-    if not matches:
-        return None
-    return float(matches[-1]) / 100
+def parse_discount_rate(text: str, *, allow_bare_percentage: bool = True) -> float | None:
+    """Return the discount rate expressed in ``text`` as a fraction.
+
+    A percentage is only treated as a discount when a discount marker sits next
+    to it (``discount``, ``off``, ``折扣`` ...). Percentages that belong to
+    payment terms or taxes are ignored. When ``allow_bare_percentage`` is true a
+    final line that only contains a percentage is accepted as well, which covers
+    the case where the assistant already asked for the discount rate.
+    """
+    explicit = _explicit_discount_rates(text)
+    if explicit:
+        return explicit[-1]
+    if allow_bare_percentage:
+        return _bare_percentage_answer(text)
+    return None
+
+
+def _explicit_discount_rates(text: str) -> list[float]:
+    rates: list[float] = []
+    for match in DISCOUNT_PERCENT_RE.finditer(text):
+        if _is_discount_percentage(text, match.start(), match.end()):
+            rates.append(float(match.group(1)) / 100)
+    return rates
+
+
+def _is_discount_percentage(text: str, start: int, end: int) -> bool:
+    """Decide whether a percentage close to ``start`` describes a discount.
+
+    The nearest marker wins, so "a 30% deposit applies and a 25% discount"
+    only yields the 25% value.
+    """
+    window = text[max(0, start - DISCOUNT_CONTEXT_WINDOW) : end + DISCOUNT_CONTEXT_WINDOW]
+    offset = start - max(0, start - DISCOUNT_CONTEXT_WINDOW)
+    discount_distance = _nearest_marker_distance(window, DISCOUNT_MARKER_RE, offset)
+    excluded_distance = _nearest_marker_distance(window, NON_DISCOUNT_MARKER_RE, offset)
+    if discount_distance is None:
+        return False
+    return excluded_distance is None or discount_distance < excluded_distance
+
+
+def _nearest_marker_distance(
+    window: str,
+    marker: re.Pattern[str],
+    offset: int,
+) -> int | None:
+    distances = [abs(match.start() - offset) for match in marker.finditer(window)]
+    return min(distances) if distances else None
+
+
+def _bare_percentage_answer(text: str) -> float | None:
+    for line in reversed(text.splitlines()):
+        candidate = line.strip()
+        if not candidate:
+            continue
+        match = BARE_PERCENT_RE.match(candidate)
+        return float(match.group(1)) / 100 if match else None
+    return None
 
 
 def _extract_region(text: str) -> str | None:

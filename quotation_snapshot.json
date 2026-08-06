@@ -2,7 +2,7 @@
   "metadata": {
     "snapshot_version": "0.1.0",
     "generated_at": "2026-07-06T08:16:17.601905+00:00",
-    "source_file": "C:\\Users\\19034268\\AppData\\Local\\Temp\\1\\quotation_data.xlsx",
+    "source_file": "quotation_data.xlsx",
     "source_format": "xlsx",
     "ingestion_mode": "openxml_read_only",
     "notes": [
