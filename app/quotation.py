@@ -10,6 +10,20 @@ from app.natural_language import parse_discount_rate
 
 
 DISCOUNT_APPROVAL_THRESHOLD = 0.35
+DISCOUNT_RATE_PRECISION = 6
+
+# Cached artefacts that must be discarded whenever the quotation changes.
+GENERATED_OUTPUT_KEYS = (
+    "quotation_excel",
+    "approval_excel",
+    "customer_pdf",
+    "approval_description",
+)
+
+APPROVAL_FINGERPRINT_MISMATCH_MESSAGE = (
+    "The quotation changed after submission. "
+    "Please submit it for approval again."
+)
 
 AUTO_APPROVED = "AUTO_APPROVED"
 MANAGER_APPROVAL_REQUIRED = "MANAGER_APPROVAL_REQUIRED"
@@ -137,7 +151,7 @@ def normalize_configuration(
     main_description = str(main_model.get("short_description") or "").strip()
     main_product = _normalize_main_product(conversation_text, main_description)
     quantity = _extract_main_quantity(conversation_text)
-    accessories = _extract_accessories(conversation_text)
+    accessories = _extract_accessories(conversation_text, quantity)
 
     return {
         "customer_name": _extract_customer_name(conversation_text),
@@ -153,6 +167,125 @@ def normalize_configuration(
         ),
         "discount_rate": parse_discount_rate(conversation_text),
     }
+
+
+def merge_configuration(
+    previous_configuration: dict[str, Any],
+    latest_turn: str,
+    full_conversation: str,
+    recommendation: dict[str, Any],
+) -> dict[str, Any]:
+    """Combine the full-conversation configuration with the latest correction.
+
+    The full conversation still produces the base configuration, so nothing that
+    was already confirmed is lost. Fields that the sales user restates in the
+    latest turn override the base values, which is what makes corrections such
+    as "Actually change the region to Malaysia" take effect.
+    """
+    merged: dict[str, Any] = dict(previous_configuration or {})
+    base = normalize_configuration(full_conversation, recommendation)
+    for key, value in base.items():
+        if value not in (None, "", []):
+            merged[key] = value
+
+    merged.update(_explicit_turn_fields(latest_turn, recommendation))
+    merged["accessories"] = merge_duplicate_accessories(
+        merged.get("accessories") or []
+    )
+    merged["configuration_description"] = _configuration_description(
+        str(merged.get("main_product") or ""),
+        int(merged.get("quantity") or 1),
+        merged["accessories"],
+    )
+    return merged
+
+
+def _explicit_turn_fields(
+    latest_turn: str,
+    recommendation: dict[str, Any],
+) -> dict[str, Any]:
+    """Return only the fields the latest turn states explicitly."""
+    turn = (latest_turn or "").strip()
+    if not turn:
+        return {}
+
+    fields: dict[str, Any] = {}
+    customer_name = _extract_customer_name(turn)
+    if customer_name:
+        fields["customer_name"] = customer_name
+
+    region = _extract_region(turn, {})
+    if region:
+        fields["region"] = region
+
+    currency = _extract_currency(turn)
+    if currency:
+        fields["currency"] = currency
+
+    main_product = _last_mentioned_main_product(turn)
+    if main_product:
+        fields["main_product"] = main_product
+
+    quantity = _explicit_main_quantity(turn)
+    if quantity is not None:
+        fields["quantity"] = quantity
+
+    discount_rate = parse_discount_rate(turn)
+    if discount_rate is not None:
+        fields["discount_rate"] = discount_rate
+
+    accessories = _extract_accessories(turn, fields.get("quantity", 1))
+    if accessories:
+        fields["accessories"] = accessories
+    return fields
+
+
+def merge_duplicate_accessories(
+    accessories: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse accessories that refer to the same catalog item."""
+    merged: dict[str, dict[str, Any]] = {}
+    for accessory in accessories:
+        name = str(accessory.get("name") or "").strip()
+        if not name:
+            continue
+        quantity = max(1, int(accessory.get("quantity") or 1))
+        if name in merged:
+            merged[name]["quantity"] = max(merged[name]["quantity"], quantity)
+        else:
+            merged[name] = {"name": name, "quantity": quantity}
+    return list(merged.values())
+
+
+def merge_duplicate_quotation_lines(
+    lines: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse quotation lines that share the same product code.
+
+    The explicitly requested quantity wins instead of accumulating repeated
+    matches, so a product mentioned twice never produces two quotation rows.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for line in lines:
+        product_code = str(line.get("product_code") or "").strip()
+        current = dict(line)
+        if product_code not in merged:
+            merged[product_code] = current
+            order.append(product_code)
+            continue
+        existing = merged[product_code]
+        existing_quantity = _safe_int(existing.get("quantity"))
+        current_quantity = _safe_int(current.get("quantity"))
+        existing["quantity"] = max(existing_quantity, current_quantity)
+    return [merged[code] for code in order]
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def missing_configuration_fields(configuration: dict[str, Any]) -> list[str]:
@@ -215,7 +348,7 @@ def build_quotation_lines(configuration: dict[str, Any]) -> list[dict[str, Any]]
             )
         )
 
-    result = recalculate_quotation(lines)
+    result = recalculate_quotation(merge_duplicate_quotation_lines(lines))
     if result["errors"]:
         raise QuotationValidationError(" ".join(result["errors"]))
     return result["lines"]
@@ -299,18 +432,47 @@ def recalculate_quotation(lines: Iterable[dict[str, Any]]) -> dict[str, Any]:
 def calculate_discount_rate(list_total: float, quotation_total: float) -> float:
     if list_total <= 0:
         return 0.0
-    return (list_total - quotation_total) / list_total
+    # Rounding to 6 decimals keeps float noise such as 0.35000000000000003 from
+    # pushing an exact 35% quotation over the approval threshold.
+    return round((list_total - quotation_total) / list_total, DISCOUNT_RATE_PRECISION)
 
 
 def get_discount_approval_status(discount_rate: float) -> str:
-    if not 0 <= discount_rate <= 1:
+    rounded_rate = round(float(discount_rate), DISCOUNT_RATE_PRECISION)
+    if not 0 <= rounded_rate <= 1:
         raise QuotationValidationError("Discount rate must be between 0% and 100%.")
 
     # The 35% boundary is included in Sales authority.
     # Only a discount strictly greater than 35% requires manager approval.
-    if discount_rate <= DISCOUNT_APPROVAL_THRESHOLD:
+    if rounded_rate <= DISCOUNT_APPROVAL_THRESHOLD:
         return AUTO_APPROVED
     return MANAGER_APPROVAL_REQUIRED
+
+
+def quotation_export_errors(
+    configuration: dict[str, Any],
+    totals: dict[str, Any],
+) -> list[str]:
+    """Return the reasons why a quotation must not be exported."""
+    errors: list[str] = list(totals.get("errors") or [])
+    if not totals.get("lines"):
+        errors.append("The quotation has no lines.")
+    if float(totals.get("list_total") or 0) <= 0:
+        errors.append("List Total must be greater than 0.")
+    if float(totals.get("quotation_total") or 0) < 0:
+        errors.append("Quotation Total cannot be negative.")
+    if not str((configuration or {}).get("customer_name") or "").strip():
+        errors.append("A customer name is required.")
+    if not str((configuration or {}).get("currency") or "").strip():
+        errors.append("A currency is required.")
+    return list(dict.fromkeys(errors))
+
+
+def can_export_quotation(
+    configuration: dict[str, Any],
+    totals: dict[str, Any],
+) -> bool:
+    return not quotation_export_errors(configuration, totals)
 
 
 def is_customer_pdf_available(
@@ -343,6 +505,22 @@ def manager_status_after_quotation_change(
     if quotation_fingerprint(previous_lines) != quotation_fingerprint(edited_lines):
         return MANAGER_NOT_SUBMITTED
     return current_status
+
+
+def clear_generated_outputs(generated_files: dict[str, Any]) -> None:
+    """Drop every cached export so no stale file can be downloaded."""
+    for key in GENERATED_OUTPUT_KEYS:
+        generated_files.pop(key, None)
+
+
+def can_manager_approve(
+    current_lines: Iterable[dict[str, Any]],
+    submitted_fingerprint: Any,
+) -> bool:
+    """Only allow an approval that still matches the submitted quotation."""
+    if not submitted_fingerprint:
+        return False
+    return quotation_fingerprint(current_lines) == submitted_fingerprint
 
 
 def build_approval_description(
@@ -414,8 +592,7 @@ def generate_quotation_excel(
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
-    if totals.get("errors"):
-        raise QuotationValidationError("Cannot export an invalid quotation.")
+    _require_exportable_quotation(configuration, totals)
 
     workbook = Workbook()
     quotation_sheet = workbook.active
@@ -547,8 +724,7 @@ def generate_customer_pdf(
         TableStyle,
     )
 
-    if totals.get("errors"):
-        raise QuotationValidationError("Cannot export an invalid quotation.")
+    _require_exportable_quotation(configuration, totals)
 
     currency = escape(str(configuration.get("currency") or ""))
     output = BytesIO()
@@ -642,6 +818,17 @@ def generate_customer_pdf(
     return output.getvalue()
 
 
+def _require_exportable_quotation(
+    configuration: dict[str, Any],
+    totals: dict[str, Any],
+) -> None:
+    errors = quotation_export_errors(configuration, totals)
+    if errors:
+        raise QuotationValidationError(
+            "Cannot export an invalid quotation. " + " ".join(errors)
+        )
+
+
 def _extract_customer_name(text: str) -> str:
     patterns = (
         re.compile(
@@ -653,6 +840,10 @@ def _extract_customer_name(text: str) -> str:
             r"\bcustomer(?:\s+name)?\s*(?:is|:)\s*"
             r"([A-Za-z0-9&.' -]{2,80})(?:[,.]|\n|$)",
             re.IGNORECASE,
+        ),
+        re.compile(
+            r"^\s*([A-Z][A-Za-z0-9&.' -]{2,80}?)\s+needs?\b",
+            re.MULTILINE,
         ),
     )
     for pattern in patterns:
@@ -700,7 +891,28 @@ def _normalize_main_product(text: str, recommendation_description: str) -> str:
     return recommendation_description
 
 
+def _last_mentioned_main_product(text: str) -> str:
+    """Return the main product mentioned last in ``text``.
+
+    Using the last mention makes corrections such as
+    "Replace DRX Compass with DRX Revolution" resolve to the replacement.
+    """
+    matches: list[tuple[int, str]] = []
+    for pattern, _, description, _ in MAIN_PRODUCT_PRICE_BOOK:
+        found = list(pattern.finditer(text))
+        if found:
+            matches.append((found[-1].start(), description))
+    if not matches:
+        return ""
+    return max(matches, key=lambda item: item[0])[1]
+
+
 def _extract_main_quantity(text: str) -> int:
+    explicit = _explicit_main_quantity(text)
+    return explicit if explicit is not None else 1
+
+
+def _explicit_main_quantity(text: str) -> int | None:
     count_token = r"\d+|" + "|".join(NUMBER_WORDS)
     patterns = (
         re.compile(
@@ -708,7 +920,13 @@ def _extract_main_quantity(text: str) -> int:
             re.IGNORECASE,
         ),
         re.compile(
-            rf"\b({count_token})\s+(?:[\w-]+\s+){{0,5}}systems?\b",
+            rf"\b({count_token})\s+"
+            rf"(?:(?!per\b|for\b|each\b|every\b)[\w-]+\s+){{0,5}}systems?\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            rf"\bquantity\s+(?:should\s+be|shall\s+be|must\s+be|is|to|=)\s*"
+            rf"({count_token})\b",
             re.IGNORECASE,
         ),
     )
@@ -716,43 +934,104 @@ def _extract_main_quantity(text: str) -> int:
     for pattern in patterns:
         for match in pattern.finditer(text):
             matches.append((match.start(), _number_value(match.group(1))))
-    return max(matches, default=(-1, 1), key=lambda item: item[0])[1]
+    if not matches:
+        return None
+    return max(matches, key=lambda item: item[0])[1]
 
 
-def _extract_accessories(text: str) -> list[dict[str, Any]]:
-    candidates = (
-        (
-            "Wireless Detector",
-            re.compile(r"\bwireless\s+detectors?\b", re.IGNORECASE),
+ACCESSORY_PATTERNS = (
+    (
+        "Wireless Detector",
+        re.compile(r"\bwireless\s+detectors?\b", re.IGNORECASE),
+    ),
+    (
+        "Focus Detector",
+        re.compile(r"\bfocus(?:\s+wireless)?\s+detectors?\b", re.IGNORECASE),
+    ),
+    (
+        "Three-Year Warranty",
+        re.compile(
+            r"\b(?:three|3)[ -]?year(?:\s+extended)?\s+warranty\b",
+            re.IGNORECASE,
         ),
-        (
-            "Focus Detector",
-            re.compile(r"\bfocus(?:\s+wireless)?\s+detectors?\b", re.IGNORECASE),
-        ),
-        (
-            "Three-Year Warranty",
-            re.compile(
-                r"\b(?:three|3)[ -]?year(?:\s+extended)?\s+warranty\b",
-                re.IGNORECASE,
-            ),
-        ),
-        ("Wall Stand", re.compile(r"\bwall\s*stands?\b", re.IGNORECASE)),
-        (
-            "Patient Table",
-            re.compile(r"\b(?:patient\s+|radiography\s+)?tables?\b", re.IGNORECASE),
-        ),
-        ("Grid", re.compile(r"\bgrids?\b", re.IGNORECASE)),
-    )
-    accessories = []
-    for name, pattern in candidates:
+    ),
+    ("Wall Stand", re.compile(r"\bwall\s*stands?\b", re.IGNORECASE)),
+    (
+        "Patient Table",
+        re.compile(r"\b(?:patient\s+|radiography\s+)?tables?\b", re.IGNORECASE),
+    ),
+    ("Grid", re.compile(r"\bgrids?\b", re.IGNORECASE)),
+)
+
+# Used only when no branded detector was recognised, so "2 detectors per system"
+# still produces a detector line without duplicating the branded detectors.
+GENERIC_DETECTOR_RE = re.compile(r"\bdetectors?\b", re.IGNORECASE)
+DETECTOR_ACCESSORY_NAMES = ("Wireless Detector", "Focus Detector")
+
+# "per system" repeats the accessory for every main system in the configuration.
+PER_SYSTEM_RE = re.compile(
+    r"^[\s,]*(?:per|for)\s+(?:(?:each|every)\s+)?(?:main\s+)?system\b",
+    re.IGNORECASE,
+)
+PER_SYSTEM_LOOKAHEAD = 32
+
+
+def _extract_accessories(text: str, main_quantity: int = 1) -> list[dict[str, Any]]:
+    accessories: list[dict[str, Any]] = []
+    focus_pattern = dict(ACCESSORY_PATTERNS)["Focus Detector"]
+    focus_spans = [match.span() for match in focus_pattern.finditer(text)]
+    for name, pattern in ACCESSORY_PATTERNS:
         matches = list(pattern.finditer(text))
+        if name == "Wireless Detector":
+            # "Focus wireless detector" already matched the Focus pattern.
+            matches = [
+                match
+                for match in matches
+                if not _is_inside_any(match.start(), focus_spans)
+            ]
         if not matches:
             continue
-        quantity = 1
-        if name != "Three-Year Warranty":
-            quantity = _quantity_before_match(text, matches[-1].start())
-        accessories.append({"name": name, "quantity": quantity})
-    return accessories
+        accessories.extend(
+            _accessory_from_match(name, text, match, main_quantity)
+            for match in matches
+        )
+
+    detected_names = {accessory["name"] for accessory in accessories}
+    if not detected_names & set(DETECTOR_ACCESSORY_NAMES):
+        generic_matches = list(GENERIC_DETECTOR_RE.finditer(text))
+        if generic_matches:
+            accessories.extend(
+                _accessory_from_match(
+                    "Wireless Detector",
+                    text,
+                    match,
+                    main_quantity,
+                )
+                for match in generic_matches
+            )
+    return merge_duplicate_accessories(accessories)
+
+
+def _accessory_from_match(
+    name: str,
+    text: str,
+    match: re.Match[str],
+    main_quantity: int,
+) -> dict[str, Any]:
+    if name == "Three-Year Warranty":
+        return {"name": name, "quantity": 1}
+    quantity = _quantity_before_match(text, match.start())
+    if _is_per_system_accessory(text, match.end()):
+        quantity *= max(1, int(main_quantity or 1))
+    return {"name": name, "quantity": quantity}
+
+
+def _is_per_system_accessory(text: str, end: int) -> bool:
+    return bool(PER_SYSTEM_RE.match(text[end : end + PER_SYSTEM_LOOKAHEAD]))
+
+
+def _is_inside_any(position: int, spans: list[tuple[int, int]]) -> bool:
+    return any(start <= position < end for start, end in spans)
 
 
 def _quantity_before_match(text: str, start: int) -> int:

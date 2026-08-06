@@ -10,7 +10,6 @@ from app.quotation import (
     DEMO_A_PROMPT,
     DEMO_B_PROMPT,
     DISCOUNT_APPROVAL_THRESHOLD,
-    INVALID_QUOTATION,
     MANAGER_APPROVAL_REQUIRED,
     MANAGER_APPROVED,
     MANAGER_NOT_SUBMITTED,
@@ -18,16 +17,20 @@ from app.quotation import (
     MANAGER_REJECTED,
     MANAGER_REVISION_REQUESTED,
     WELCOME_MESSAGE,
+    APPROVAL_FINGERPRINT_MISMATCH_MESSAGE,
     QuotationValidationError,
     build_approval_description,
     build_quotation_lines,
     build_quotation_response,
+    can_manager_approve,
+    clear_generated_outputs,
     generate_customer_pdf,
     generate_quotation_excel,
     is_customer_pdf_available,
     manager_status_after_quotation_change,
+    merge_configuration,
     missing_configuration_fields,
-    normalize_configuration,
+    quotation_export_errors,
     quotation_fingerprint,
     recalculate_quotation,
 )
@@ -61,6 +64,7 @@ def initialize_demo_state() -> None:
         "manager_approval_status": MANAGER_NOT_SUBMITTED,
         "generated_files": {},
         "editor_version": 0,
+        "submitted_quotation_fingerprint": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -81,17 +85,27 @@ def reset_demo_state() -> None:
             "manager_approval_status",
             "generated_files",
             "editor_version",
+            "submitted_quotation_fingerprint",
             "sales_prompt",
         }:
             del st.session_state[key]
     initialize_demo_state()
 
 
+def invalidate_generated_outputs() -> None:
+    """Drop cached exports and the manager submission after any quotation edit."""
+    clear_generated_outputs(st.session_state["generated_files"])
+    st.session_state["submitted_quotation_fingerprint"] = None
+
+
 def main() -> None:
     initialize_demo_state()
 
     st.title("AI Quotation Assistant")
-    st.caption("Configure products, prepare quotations and check discount approval.")
+    st.caption(
+        "Offline demonstration using synthetic product and pricing data. "
+        "No external AI, SAP, database or email service is connected."
+    )
 
     demo_a, demo_b, reset = st.columns([1, 1, 1])
     with demo_a:
@@ -130,6 +144,12 @@ def main() -> None:
     with quotation_column:
         _render_quotation()
 
+    st.divider()
+    st.caption(
+        "Demo only — synthetic data and deterministic local matching. "
+        "No external AI API, SAP connection, database or email delivery is used."
+    )
+
 
 def _load_demo(prompt: str) -> None:
     reset_demo_state()
@@ -150,9 +170,15 @@ def _process_prompt(prompt: str) -> None:
 
     recommendation = get_recommender().recommend_from_text(conversation_text)
     recommendation_data = to_jsonable(recommendation)
-    configuration = normalize_configuration(conversation_text, recommendation_data)
+    configuration = merge_configuration(
+        st.session_state["configuration"],
+        clean_prompt,
+        conversation_text,
+        recommendation_data,
+    )
     st.session_state["configuration"] = configuration
     st.session_state["discount_rate"] = configuration.get("discount_rate")
+    invalidate_generated_outputs()
 
     missing = missing_configuration_fields(configuration)
     if missing:
@@ -190,7 +216,7 @@ def _process_prompt(prompt: str) -> None:
     st.session_state["discount_rate"] = totals["discount_rate"]
     st.session_state["approval_status"] = totals["approval_status"]
     st.session_state["manager_approval_status"] = MANAGER_NOT_SUBMITTED
-    st.session_state["generated_files"] = {}
+    invalidate_generated_outputs()
     st.session_state["editor_version"] += 1
     if not st.session_state["quotation_id"]:
         st.session_state["quotation_id"] = f"Q-{date.today():%Y%m%d}-001"
@@ -228,20 +254,28 @@ def _render_configuration() -> None:
             return
 
         customer, region, currency = st.columns(3)
-        customer.metric("Customer", configuration.get("customer_name") or "Not provided")
-        region.metric("Region", configuration.get("region") or "Not provided")
-        currency.metric("Currency", configuration.get("currency") or "Not provided")
+        customer.markdown(
+            f"**Customer**  \n{configuration.get('customer_name') or 'Not provided'}"
+        )
+        region.markdown(f"**Region**  \n{configuration.get('region') or 'Not provided'}")
+        currency.markdown(
+            f"**Currency**  \n{configuration.get('currency') or 'Not provided'}"
+        )
 
-        st.markdown(f"**Main Product**  \n{configuration.get('main_product') or 'Not identified'}")
-        st.markdown(f"**Quantity**  \n{configuration.get('quantity') or 1}")
-        accessory_text = ", ".join(
-            f"{item['quantity']} x {item['name']}"
+        product, quantity = st.columns([3, 1])
+        product.markdown(
+            f"**Main Product**  \n{configuration.get('main_product') or 'Not provided'}"
+        )
+        quantity.markdown(f"**Quantity**  \n{configuration.get('quantity') or 1}")
+
+        accessory_text = " · ".join(
+            f"{item['quantity']} × {item['name']}"
             for item in configuration.get("accessories") or []
         )
-        st.markdown(f"**Accessories**  \n{accessory_text or 'None requested'}")
-        st.markdown(
-            "**Configuration Description**  \n"
-            + (configuration.get("configuration_description") or "Not available")
+        st.markdown(f"**Accessories**  \n{accessory_text or 'Not provided'}")
+        st.caption(
+            "Configuration: "
+            + (configuration.get("configuration_description") or "Not provided")
         )
 
 
@@ -265,6 +299,10 @@ def _render_quotation() -> None:
 
 def _render_quotation_editor() -> None:
     current_lines = st.session_state["quotation_lines"]
+    st.caption(
+        "You can adjust Quantity and Quotation Unit Price. "
+        "Approval status updates automatically."
+    )
     display_rows = [
         {
             "Product Code": line["product_code"],
@@ -343,7 +381,7 @@ def _render_quotation_editor() -> None:
         st.session_state["quotation_totals"] = recalculated
         st.session_state["discount_rate"] = recalculated["discount_rate"]
         st.session_state["approval_status"] = recalculated["approval_status"]
-        st.session_state["generated_files"] = {}
+        invalidate_generated_outputs()
         st.rerun()
 
     st.session_state["quotation_totals"] = recalculated
@@ -373,12 +411,12 @@ def _render_totals_and_approval(totals: dict[str, Any]) -> None:
     if approval_status == AUTO_APPROVED:
         status.success(
             "**Automatically approved**  \n"
-            "The discount rate is within the 35% Sales approval authority."
+            "Discount rate is within the 35% Sales authority."
         )
     elif approval_status == MANAGER_APPROVAL_REQUIRED:
         status.warning(
             "**Manager approval required**  \n"
-            "The discount rate exceeds the 35% Sales approval authority."
+            "Discount rate exceeds the 35% Sales authority."
         )
         _render_manager_status()
     else:
@@ -390,9 +428,14 @@ def _render_manager_status() -> None:
     if manager_status == MANAGER_NOT_SUBMITTED:
         st.caption("Approval request has not been submitted.")
     elif manager_status == MANAGER_PENDING:
-        st.info("Approval request submitted  \nApprover: Sales Director  \nStatus: Pending approval")
+        st.info(
+            "Approval request submitted  \n"
+            "Approver: Sales Director  \nStatus: Pending approval"
+        )
     elif manager_status == MANAGER_APPROVED:
-        st.success("Approved by Sales Director")
+        st.success(
+            "**Approved by Sales Director**  \nCustomer PDF is now available."
+        )
     elif manager_status == MANAGER_REVISION_REQUESTED:
         st.warning("Revision requested by Sales Director")
     elif manager_status == MANAGER_REJECTED:
@@ -400,11 +443,15 @@ def _render_manager_status() -> None:
 
 
 def _render_output_actions(totals: dict[str, Any]) -> None:
-    if totals["approval_status"] == INVALID_QUOTATION:
-        st.error("Correct the quotation errors before generating files.")
+    configuration = st.session_state["configuration"]
+    export_errors = quotation_export_errors(configuration, totals)
+    if export_errors:
+        st.error(
+            "This quotation cannot be exported yet:\n\n"
+            + "\n".join(f"- {error}" for error in export_errors)
+        )
         return
 
-    configuration = st.session_state["configuration"]
     quotation_id = st.session_state["quotation_id"]
     approval_status = totals["approval_status"]
     manager_status = st.session_state["manager_approval_status"]
@@ -453,15 +500,6 @@ def _render_output_actions(totals: dict[str, Any]) -> None:
                 width="stretch",
             )
 
-        st.text_area(
-            "Approval Description",
-            value=approval_description,
-            height=280,
-            key=(
-                f"approval_description_{quotation_id}_"
-                f"{totals['quotation_total']:.2f}_{totals['discount_rate']:.6f}"
-            ),
-        )
         with st.popover("Copy Approval Description", width="stretch"):
             st.code(approval_description, language=None)
             st.caption("Use the copy icon in the code block.")
@@ -472,6 +510,9 @@ def _render_output_actions(totals: dict[str, Any]) -> None:
             disabled=manager_status == MANAGER_PENDING,
         ):
             st.session_state["manager_approval_status"] = MANAGER_PENDING
+            st.session_state["submitted_quotation_fingerprint"] = (
+                quotation_fingerprint(st.session_state["quotation_lines"])
+            )
             st.rerun()
 
         with st.expander("Manager Demo Controls"):
@@ -485,9 +526,18 @@ def _render_output_actions(totals: dict[str, Any]) -> None:
                 width="stretch",
                 disabled=controls_disabled,
             ):
-                st.session_state["manager_approval_status"] = MANAGER_APPROVED
-                st.session_state["generated_files"].pop("customer_pdf", None)
-                st.rerun()
+                # The approval must still belong to the submitted quotation.
+                if can_manager_approve(
+                    st.session_state["quotation_lines"],
+                    st.session_state["submitted_quotation_fingerprint"],
+                ):
+                    st.session_state["manager_approval_status"] = MANAGER_APPROVED
+                    st.session_state["generated_files"].pop("customer_pdf", None)
+                    st.rerun()
+                else:
+                    st.session_state["manager_approval_status"] = MANAGER_NOT_SUBMITTED
+                    st.session_state["submitted_quotation_fingerprint"] = None
+                    st.error(APPROVAL_FINGERPRINT_MISMATCH_MESSAGE)
             if revision.button(
                 "Request Revision",
                 width="stretch",
