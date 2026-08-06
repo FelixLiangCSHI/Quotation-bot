@@ -1,0 +1,31 @@
+{
+  "generated_from": "quotation_snapshot.json",
+  "confirmed_rule_count": 700,
+  "confirmed_counts_by_type": {
+    "product_region_allow": 18,
+    "system_compatibility": 590,
+    "detector_grid_support": 33,
+    "generator_tube_spec": 59
+  },
+  "review_rule_count": 387,
+  "review_counts_by_type": {
+    "free_text_constraint": 206,
+    "region_only": 8,
+    "any_one_of_n": 16,
+    "must_select": 20,
+    "detector_bucky_match": 58,
+    "detector_grid_match": 30,
+    "feature_requirement": 23,
+    "region_exclusion": 26
+  },
+  "review_counts_by_reason": {
+    "natural_language_constraint_needs_normalization": 206,
+    "region_part_implemented_review_extra_text": 8,
+    "not_yet_implemented_option_cardinality": 16,
+    "not_yet_implemented_required_selection": 20,
+    "not_yet_implemented_detector_bucky_check": 58,
+    "candidate_detector_grid_rule_needs_confirmation": 30,
+    "not_yet_implemented_requirement_rule": 23,
+    "not_yet_implemented_region_block": 26
+  }
+}

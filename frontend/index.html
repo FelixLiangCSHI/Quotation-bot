@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>Quotation Bot Web</title>
+    <link rel="stylesheet" href="./styles.css?v=20260717-download2" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace" aria-label="Quotation recommendation workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Quotation Bot</p>
+            <h1>Conversational Quote Builder</h1>
+          </div>
+          <div class="api-state" id="apiState">API checking</div>
+        </header>
+
+        <section class="conversation" aria-label="Quote conversation">
+          <div class="chat-feed" id="chatFeed"></div>
+        </section>
+
+        <section class="composer" aria-label="Conversation message">
+          <label for="messageInput">Message</label>
+          <textarea
+            id="messageInput"
+            spellcheck="false"
+            rows="4"
+          ></textarea>
+          <div class="composer-actions">
+            <button class="icon-button secondary" type="button" id="sampleButton" aria-label="Upload attachment" title="Upload attachment">
+              <span aria-hidden="true">+</span>
+            </button>
+            <input id="attachmentInput" type="file" multiple hidden />
+            <div class="standard-config-actions" aria-label="Standard product configurations">
+              <label class="region-picker" for="regionSelect">
+                <span>Region</span>
+                <select id="regionSelect" name="region">
+                  <option value="china">China</option>
+                  <option value="italy">Italy</option>
+                  <option value="us">US</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <button class="standard-config-button" type="button" data-standard-config="compass">DRX-Compass</button>
+              <button class="standard-config-button" type="button" data-standard-config="rise">DRX-Rise</button>
+              <button class="standard-config-button" type="button" data-standard-config="revolution">DRX-Revolution Plus</button>
+              <button class="standard-config-button" type="button" data-standard-config="evolution">DRX-Evolution Plus</button>
+            </div>
+            <button class="text-button" type="button" id="clearSessionButton">Clear session</button>
+            <button class="primary-action" type="button" id="sendButton">
+              <span aria-hidden="true">-></span>
+              Send
+            </button>
+          </div>
+        </section>
+
+        <section class="answer-panel" id="answerPanel" aria-live="polite" hidden>
+          <div class="result" id="result" hidden>
+            <div class="result-header">
+              <div>
+                <p class="section-label">Recommended Main Model</p>
+                <h2 id="mainModelTitle"></h2>
+              </div>
+              <div class="status-badge" id="statusBadge">unknown</div>
+            </div>
+
+            <div class="item-section">
+              <div class="section-row">
+                <p class="section-label">Compatible Options</p>
+                <div class="section-actions">
+                  <span id="accessoryCount">0</span>
+                  <button class="text-button print-proposal-button" type="button" id="printProposalButton" disabled>Download Proposal</button>
+                </div>
+              </div>
+              <div class="quote-table-wrap">
+                <table class="quote-table">
+                  <thead>
+                    <tr>
+                      <th>Qty</th>
+                      <th>Cat #</th>
+                      <th>Description</th>
+                      <th>Step</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="accessoryList"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <aside class="evidence" aria-label="Rule evidence and API response details">
+        <section class="side-section">
+          <p class="section-label">Modification History</p>
+          <div class="history-list" id="historyList">
+            <p class="muted">No quote history yet.</p>
+          </div>
+        </section>
+
+        <section class="side-section">
+          <p class="section-label">Rule Check</p>
+          <div class="rule-summary" id="ruleSummary">
+            <strong>No result yet</strong>
+            <span>Waiting for a recommendation.</span>
+          </div>
+        </section>
+
+        <section class="side-section">
+          <p class="section-label">Parsed Request</p>
+          <dl class="facts" id="factsList">
+            <div><dt>Region</dt><dd>-</dd></div>
+            <div><dt>System</dt><dd>-</dd></div>
+            <div><dt>Acquisition</dt><dd>-</dd></div>
+          </dl>
+        </section>
+
+        <section class="side-section">
+          <p class="section-label">Alternatives</p>
+          <div class="compact-list" id="alternativeList">
+            <p class="muted">No alternatives yet.</p>
+          </div>
+        </section>
+
+        <section class="side-section">
+          <p class="section-label">Issues and Notices</p>
+          <div class="compact-list" id="issueList">
+            <p class="muted">No issues yet.</p>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <section class="proposal-print" id="proposalPrint" aria-label="Printable proposal"></section>
+
+    <script src="./app.js?v=20260720-region-options" type="module"></script>
+  </body>
+</html>

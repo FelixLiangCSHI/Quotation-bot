@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local IDE/editor files
+.vscode/
+.vs/
+.idea/
+*.code-workspace
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated demo artifacts
+Output Sample/Generated Demo/
+PPT/*.pptx
+
+# Internal source/reference documents (not for the public repository)
+Decision Tree/
+Output Sample/
+docs/sales_meeting_open_questions.xlsx
+
+# Temporary files
+*.tmp
+*.temp
+~$*
