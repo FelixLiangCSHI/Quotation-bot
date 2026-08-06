@@ -6,7 +6,12 @@ from io import BytesIO
 from typing import Any, Callable, Iterable
 from xml.sax.saxutils import escape
 
-from app.natural_language import parse_discount_rate
+from app.natural_language import (
+    CHEST_EXAMINATION,
+    detect_clinical_use_case,
+    detect_system_family,
+    parse_discount_rate,
+)
 
 
 DISCOUNT_APPROVAL_THRESHOLD = 0.35
@@ -105,6 +110,29 @@ MAIN_PRODUCT_PRICE_BOOK = (
     ),
 )
 
+MAIN_PRODUCT_SHORT_NAMES = {
+    "DRX-COMPASS": "DRX Compass",
+    "DRX-REVOLUTION": "DRX Revolution",
+    "DRX-RISE": "DRX Rise",
+}
+
+SYSTEM_VARIANT_FAMILIES = ("OTC", "FMT")
+
+CLINICAL_USE_CASE_LABELS = {CHEST_EXAMINATION: "Chest examination"}
+
+# Deterministic clinical package: only accessories that already exist in
+# ``ACCESSORY_PRICE_BOOK`` may be recommended.
+CHEST_EXAM_DEFAULT_ACCESSORIES = (
+    "Wireless Detector",
+    "Wall Stand",
+    "Grid",
+)
+
+# (main product code, system family, clinical use case) -> default accessories.
+CLINICAL_CONFIGURATION_PACKAGES = {
+    ("DRX-COMPASS", "OTC", CHEST_EXAMINATION): CHEST_EXAM_DEFAULT_ACCESSORIES,
+}
+
 ACCESSORY_PRICE_BOOK = {
     "Wireless Detector": {
         "product_code": "DET-WL-01",
@@ -152,21 +180,31 @@ def normalize_configuration(
     main_product = _normalize_main_product(conversation_text, main_description)
     quantity = _extract_main_quantity(conversation_text)
     accessories = _extract_accessories(conversation_text, quantity)
+    system_variant = build_system_variant(
+        main_product,
+        detect_system_family(conversation_text),
+    )
+    clinical_use_case = detect_clinical_use_case(conversation_text)
 
-    return {
+    configuration = {
         "customer_name": _extract_customer_name(conversation_text),
         "region": _extract_region(conversation_text, recommendation),
         "currency": _extract_currency(conversation_text),
         "main_product": main_product,
+        "system_variant": system_variant,
+        "clinical_use_case": clinical_use_case,
         "quantity": quantity,
         "accessories": accessories,
         "configuration_description": _configuration_description(
             main_product,
             quantity,
             accessories,
+            system_variant,
+            clinical_use_case,
         ),
         "discount_rate": parse_discount_rate(conversation_text),
     }
+    return apply_clinical_configuration_defaults(configuration, conversation_text)
 
 
 def merge_configuration(
@@ -192,12 +230,104 @@ def merge_configuration(
     merged["accessories"] = merge_duplicate_accessories(
         merged.get("accessories") or []
     )
-    merged["configuration_description"] = _configuration_description(
-        str(merged.get("main_product") or ""),
-        int(merged.get("quantity") or 1),
-        merged["accessories"],
-    )
+    merged = apply_clinical_configuration_defaults(merged, full_conversation)
     return merged
+
+
+def build_system_variant(main_product: str, system_family: str | None) -> str:
+    """Return the configuration variant name such as ``DRX Compass OTC``.
+
+    The variant never introduces a new main product or a new price. It only
+    records how the recognised system is mounted.
+    """
+    if not main_product or not system_family:
+        return ""
+    if system_family not in SYSTEM_VARIANT_FAMILIES:
+        return ""
+    code, _, _ = _main_product_price(main_product)
+    short_name = MAIN_PRODUCT_SHORT_NAMES.get(code)
+    if not short_name:
+        return ""
+    return f"{short_name} {system_family}"
+
+
+def system_variant_family(system_variant: str) -> str:
+    """Return the family (``OTC``/``FMT``) recorded in ``system_variant``."""
+    family = str(system_variant or "").strip().rsplit(" ", 1)[-1].upper()
+    return family if family in SYSTEM_VARIANT_FAMILIES else ""
+
+
+def clinical_use_case_label(clinical_use_case: str | None) -> str:
+    return CLINICAL_USE_CASE_LABELS.get(str(clinical_use_case or ""), "")
+
+
+def variant_product_description(main_product: str, system_variant: str) -> str:
+    """Return the quotation description carrying the configuration variant."""
+    description = str(main_product or "")
+    variant = str(system_variant or "").strip()
+    if not description or not variant:
+        return description
+    code, _, _ = _main_product_price(description)
+    short_name = MAIN_PRODUCT_SHORT_NAMES.get(code, "")
+    if not short_name or not variant.startswith(short_name):
+        return description
+    if variant in description:
+        return description
+    return description.replace(short_name, variant, 1)
+
+
+def clinical_package_for(configuration: dict[str, Any]) -> tuple[str, ...]:
+    """Return the default accessories of the matching clinical package."""
+    main_product = str((configuration or {}).get("main_product") or "")
+    if not main_product or not is_supported_main_product(main_product):
+        return ()
+    code, _, _ = _main_product_price(main_product)
+    family = system_variant_family(str(configuration.get("system_variant") or ""))
+    clinical_use_case = str(configuration.get("clinical_use_case") or "")
+    if not family or not clinical_use_case:
+        return ()
+    return CLINICAL_CONFIGURATION_PACKAGES.get(
+        (code, family, clinical_use_case),
+        (),
+    )
+
+
+def apply_clinical_configuration_defaults(
+    configuration: dict[str, Any],
+    conversation_text: str,
+) -> dict[str, Any]:
+    """Add the accessories a recognised clinical package expects.
+
+    The rule order is: explicit user input first, then the clinical default,
+    then the ordinary defaults. Accessories the user excluded are never added
+    and are removed if an earlier turn had picked them up.
+    """
+    configuration = dict(configuration or {})
+    text = str(conversation_text or "")
+    accessories = [
+        accessory
+        for accessory in merge_duplicate_accessories(
+            configuration.get("accessories") or []
+        )
+        if not is_accessory_excluded(text, str(accessory.get("name") or ""))
+    ]
+
+    quantity = max(1, int(configuration.get("quantity") or 1))
+    selected = {accessory["name"] for accessory in accessories}
+    for name in clinical_package_for(configuration):
+        if name in selected or is_accessory_excluded(text, name):
+            continue
+        accessories.append({"name": name, "quantity": quantity})
+
+    configuration["accessories"] = accessories
+    configuration["configuration_description"] = _configuration_description(
+        str(configuration.get("main_product") or ""),
+        quantity,
+        accessories,
+        str(configuration.get("system_variant") or ""),
+        configuration.get("clinical_use_case"),
+    )
+    return configuration
 
 
 def _explicit_turn_fields(
@@ -326,7 +456,10 @@ def build_quotation_lines(configuration: dict[str, Any]) -> list[dict[str, Any]]
     lines = [
         _new_quotation_line(
             product_code=main_code,
-            description=main_description,
+            description=variant_product_description(
+                main_description,
+                str(configuration.get("system_variant") or ""),
+            ),
             quantity=configuration.get("quantity", 1),
             list_unit_price=main_price,
             discount_rate=float(discount_rate),
@@ -605,8 +738,13 @@ def generate_quotation_excel(
         ("Customer", configuration.get("customer_name", "")),
         ("Region", configuration.get("region", "")),
         ("Currency", configuration.get("currency", "")),
-        ("Approval Status", approval_status),
     ]
+    if configuration.get("system_variant"):
+        metadata.append(("System Variant", str(configuration["system_variant"])))
+    clinical_label = clinical_use_case_label(configuration.get("clinical_use_case"))
+    if clinical_label:
+        metadata.append(("Clinical Use Case", clinical_label))
+    metadata.append(("Approval Status", approval_status))
     for row in metadata:
         quotation_sheet.append(row)
 
@@ -759,6 +897,17 @@ def generate_customer_pdf(
         Paragraph(f"<b>Currency:</b> {currency}", styles["BodyText"]),
         Spacer(1, 6 * mm),
     ]
+
+    clinical_label = clinical_use_case_label(configuration.get("clinical_use_case"))
+    if clinical_label:
+        story.insert(
+            len(story) - 1,
+            Paragraph(
+                f"<b>Configuration:</b> Configured for "
+                f"{escape(clinical_label.casefold())}",
+                styles["BodyText"],
+            ),
+        )
 
     table_data: list[list[Any]] = [
         ["Product Code", "Description", "Quantity", "Unit Price", "Line Total"]
@@ -1012,6 +1161,46 @@ def _extract_accessories(text: str, main_quantity: int = 1) -> list[dict[str, An
     return merge_duplicate_accessories(accessories)
 
 
+ACCESSORY_PATTERNS_BY_NAME = dict(ACCESSORY_PATTERNS)
+
+# Lightweight negation detection: "without a grid", "no grid", "exclude the
+# grid" must stop the clinical package from adding that accessory.
+ACCESSORY_NEGATION_MARKERS = (
+    r"without|no|not|non|exclude|excluding|excludes|omit|omitting|omits|"
+    r"skip|skipping|drop|remove|removing"
+)
+ACCESSORY_NEGATION_PATTERNS = {
+    name: re.compile(
+        rf"\b(?:{ACCESSORY_NEGATION_MARKERS})\b"
+        rf"(?:\s+(?:the|a|an|any|extra|additional))*\s+" + pattern.pattern,
+        re.IGNORECASE,
+    )
+    for name, pattern in ACCESSORY_PATTERNS
+}
+
+
+def is_accessory_excluded(text: str, name: str) -> bool:
+    """Return True when ``text`` explicitly rules the accessory out."""
+    pattern = ACCESSORY_PATTERNS_BY_NAME.get(name)
+    negation_pattern = ACCESSORY_NEGATION_PATTERNS.get(name)
+    if not text or pattern is None or negation_pattern is None:
+        return False
+
+    negations = list(negation_pattern.finditer(text))
+    if not negations:
+        return False
+
+    negation_spans = [match.span() for match in negations]
+    last_negation_end = negations[-1].end()
+    for match in pattern.finditer(text):
+        if _is_inside_any(match.start(), negation_spans):
+            continue
+        if match.start() >= last_negation_end:
+            # The accessory was requested again after the exclusion.
+            return False
+    return True
+
+
 def _accessory_from_match(
     name: str,
     text: str,
@@ -1050,10 +1239,18 @@ def _configuration_description(
     main_product: str,
     quantity: int,
     accessories: list[dict[str, Any]],
+    system_variant: str = "",
+    clinical_use_case: str | None = None,
 ) -> str:
     if not main_product:
         return ""
-    parts = [f"{quantity} x {main_product}"]
+    head = f"{quantity} x {system_variant} system" if system_variant else (
+        f"{quantity} x {main_product}"
+    )
+    label = clinical_use_case_label(clinical_use_case)
+    if label:
+        head = f"{head} configured for {label.casefold()}"
+    parts = [head]
     parts.extend(
         f"{accessory['quantity']} x {accessory['name']}" for accessory in accessories
     )
