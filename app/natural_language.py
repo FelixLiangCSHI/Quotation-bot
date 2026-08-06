@@ -86,6 +86,26 @@ ACQUISITION_ALIASES = (
     ("analog", ("analog", "analogue", "模拟")),
 )
 
+CHEST_EXAM_KEYWORDS = (
+    "chest",
+    "chest examination",
+    "chest exam",
+    "chest x-ray",
+    "chest xray",
+    "thorax",
+    "thoracic examination",
+    "胸片",
+    "胸部检查",
+    "胸部摄影",
+)
+
+CHEST_EXAMINATION = "chest_examination"
+
+# Only these clinical expressions may select a clinical package. Generic
+# qualifiers such as "fit best", "best" or "optimal" stay ordinary wording and
+# never decide a configuration on their own.
+CLINICAL_USE_CASE_KEYWORDS = ((CHEST_EXAMINATION, CHEST_EXAM_KEYWORDS),)
+
 PHRASE_KEYWORDS = (
     ("x-ray", ("xray", "x-ray", "x ray", "x光", "x 射线", "放射")),
     ("system", ("system", "系统", "整机", "整套", "配置")),
@@ -116,6 +136,33 @@ def parse_quote_request(text: str) -> QuoteRequest:
         system_family=_extract_system_family(raw_text),
         acquisition_type=_extract_acquisition_type(raw_text),
     )
+
+
+def detect_clinical_use_case(text: str) -> str | None:
+    """Return the clinical use case expressed in ``text``.
+
+    Only explicit clinical wording counts. Generic qualifiers such as
+    "fit best", "best", "optimal" or "suitable" are ordinary natural language
+    and never select a clinical use case on their own.
+    """
+    normalized = _normalize_clinical_text(text)
+    for use_case, aliases in CLINICAL_USE_CASE_KEYWORDS:
+        if _contains_any(normalized, aliases):
+            return use_case
+    return None
+
+
+def detect_system_family(text: str) -> str | None:
+    """Return the system family (``OTC`` or ``FMT``) mentioned in ``text``."""
+    return _extract_system_family(text)
+
+
+def _normalize_clinical_text(text: str) -> str:
+    """Casefold ``text`` and drop wording that only names chest hardware."""
+    normalized = str(text or "").casefold()
+    for hardware_term in ("胸片架", "胸片支架"):
+        normalized = normalized.replace(hardware_term, " ")
+    return normalized
 
 
 def parse_discount_rate(text: str, *, allow_bare_percentage: bool = True) -> float | None:

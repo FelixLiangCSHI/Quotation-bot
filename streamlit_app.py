@@ -23,6 +23,7 @@ from app.quotation import (
     build_quotation_lines,
     can_manager_approve,
     clear_generated_outputs,
+    clinical_use_case_label,
     generate_customer_pdf,
     generate_quotation_excel,
     is_customer_pdf_available,
@@ -215,6 +216,7 @@ def guard_unsupported_product(
     main_product = str(configuration.get("main_product") or "")
     if main_product and not is_supported_main_product(main_product):
         configuration["main_product"] = ""
+        configuration["system_variant"] = ""
         configuration["configuration_description"] = ""
         return configuration, True
     return configuration, False
@@ -233,6 +235,11 @@ def describe_known_configuration(configuration: dict[str, Any]) -> str:
     if configuration.get("main_product"):
         quantity = configuration.get("quantity") or 1
         parts.append(f"System: {quantity} × {configuration['main_product']}")
+    if configuration.get("system_variant"):
+        parts.append(f"System variant: {configuration['system_variant']}")
+    clinical_label = clinical_use_case_label(configuration.get("clinical_use_case"))
+    if clinical_label:
+        parts.append(f"Clinical use: {clinical_label}")
     for accessory in configuration.get("accessories") or []:
         parts.append(f"{accessory['quantity']} × {accessory['name']}")
     if not parts:
@@ -274,7 +281,11 @@ def build_conversation_summary(
 ) -> str:
     """Concise chat wording for a completed quotation."""
     customer = configuration.get("customer_name") or "the customer"
-    lines = [f"{configuration.get('quantity') or 1} × {configuration['main_product']}"]
+    system_name = configuration.get("system_variant") or configuration["main_product"]
+    lines = [f"{configuration.get('quantity') or 1} × {system_name}"]
+    clinical_label = clinical_use_case_label(configuration.get("clinical_use_case"))
+    if clinical_label:
+        lines[0] += f" configured for {clinical_label.casefold()}"
     lines.extend(
         f"{accessory['quantity']} × {accessory['name']}"
         for accessory in configuration.get("accessories") or []
@@ -611,6 +622,14 @@ def _render_configuration() -> None:
         quantity.markdown(f"**Quantity**  \n{configuration.get('quantity') or 1}")
 
         st.markdown(f"**Main product**  \n{configuration.get('main_product') or '—'}")
+        variant, clinical = st.columns(2)
+        variant.markdown(
+            f"**System variant**  \n{configuration.get('system_variant') or '—'}"
+        )
+        clinical.markdown(
+            "**Clinical use**  \n"
+            + (clinical_use_case_label(configuration.get("clinical_use_case")) or "—")
+        )
         accessory_text = " · ".join(
             f"{item['quantity']} × {item['name']}"
             for item in configuration.get("accessories") or []

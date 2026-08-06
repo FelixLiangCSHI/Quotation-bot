@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.quotation import (  # noqa: E402
     AUTO_APPROVED,
+    QuotationValidationError,
     DEMO_A_PROMPT,
     DEMO_B_PROMPT,
     MANAGER_APPROVAL_REQUIRED,
@@ -28,12 +29,22 @@ from app.quotation import (  # noqa: E402
     generate_customer_pdf,
     generate_quotation_excel,
     is_customer_pdf_available,
+    merge_configuration,
+    missing_configuration_fields,
     normalize_configuration,
     recalculate_quotation,
 )
 from app.recommender import QuoteRecommender  # noqa: E402
 from app.serialization import to_jsonable  # noqa: E402
 
+
+OTC_CHEST_TURNS = (
+    "I Need a compass OTC fit best chest examination",
+    "The customer is ABC Hospital.",
+    "Use Singapore.",
+    "Use USD.",
+    "30%.",
+)
 
 PER_SYSTEM_PROMPT = (
     "ABC Hospital needs three DRX Compass systems with "
@@ -157,12 +168,93 @@ def run_per_system_scenario(recommender: QuoteRecommender) -> None:
     )
 
 
+def run_otc_chest_scenario(recommender: QuoteRecommender) -> None:
+    print("Compass OTC chest examination scenario - step by step questions")
+    configuration: dict = {}
+    turns: list[str] = []
+    for index, prompt in enumerate(OTC_CHEST_TURNS):
+        turns.append(prompt)
+        conversation_text = "\n".join(turns)
+        recommendation = to_jsonable(recommender.recommend_from_text(conversation_text))
+        configuration = merge_configuration(
+            configuration,
+            prompt,
+            conversation_text,
+            recommendation,
+        )
+        if index == 0:
+            _check("System variant", configuration["system_variant"], "DRX Compass OTC")
+            _check(
+                "Clinical use case",
+                configuration["clinical_use_case"],
+                "chest_examination",
+            )
+            _check(
+                "Wireless detector quantity",
+                _accessory_quantity(configuration, "Wireless Detector"),
+                1,
+            )
+            _check(
+                "Wall stand quantity",
+                _accessory_quantity(configuration, "Wall Stand"),
+                1,
+            )
+            _check("Grid quantity", _accessory_quantity(configuration, "Grid"), 1)
+            _check(
+                "Missing fields after the first turn",
+                missing_configuration_fields(configuration),
+                ["customer name", "region", "currency"],
+            )
+            try:
+                build_quotation_lines(configuration)
+            except QuotationValidationError:
+                print("  OK  No quotation is generated before the details are known")
+            else:
+                raise SmokeTestFailure(
+                    "A quotation was generated before the commercial details "
+                    "were provided."
+                )
+
+    totals = recalculate_quotation(build_quotation_lines(configuration))
+    _check("Customer", configuration["customer_name"], "ABC Hospital")
+    _check("Region", configuration["region"], "Singapore")
+    _check("Currency", configuration["currency"], "USD")
+    _check("Discount rate", round(totals["discount_rate"], 6), 0.30)
+    _check("Approval status", totals["approval_status"], AUTO_APPROVED)
+    _check(
+        "Quotation product codes",
+        [line["product_code"] for line in totals["lines"]],
+        ["DRX-COMPASS", "DET-WL-01", "WALL-STD-01", "GRID-01"],
+    )
+    _check(
+        "Main product description",
+        totals["lines"][0]["description"],
+        "DRX Compass OTC Digital Radiography System",
+    )
+
+    excel = generate_quotation_excel(
+        "Q-SMOKE-OTC",
+        configuration,
+        totals,
+        totals["approval_status"],
+    )
+    if not excel:
+        raise SmokeTestFailure("OTC chest scenario: quotation Excel is empty.")
+    print(f"  OK  Quotation Excel bytes = {len(excel)}")
+
+    pdf = generate_customer_pdf("Q-SMOKE-OTC", configuration, totals)
+    if not pdf.startswith(b"%PDF"):
+        raise SmokeTestFailure("OTC chest scenario: customer PDF header is missing.")
+    print(f"  OK  Customer PDF bytes = {len(pdf)}")
+
+
 def main() -> int:
     recommender = QuoteRecommender()
     try:
         run_demo_a(recommender)
         run_demo_b(recommender)
         run_per_system_scenario(recommender)
+        run_otc_chest_scenario(recommender)
     except SmokeTestFailure as exc:
         print(f"SMOKE TEST FAILED: {exc}")
         return 1
