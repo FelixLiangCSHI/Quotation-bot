@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from io import BytesIO
 from typing import Any, Callable, Iterable
 from xml.sax.saxutils import escape
@@ -16,6 +17,21 @@ from app.natural_language import (
 
 DISCOUNT_APPROVAL_THRESHOLD = 0.35
 DISCOUNT_RATE_PRECISION = 6
+
+_MONEY_QUANTUM = Decimal("0.01")
+
+
+def _round_money(value: Any) -> float:
+    """Round a monetary amount to cents with Decimal half-up semantics.
+
+    Using Decimal avoids binary float artefacts (e.g. 0.145 rounding down)
+    while keeping the public float-based line dictionaries unchanged.
+    """
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return 0.0
+    return float(amount.quantize(_MONEY_QUANTUM, rounding=ROUND_HALF_UP))
 
 # Cached artefacts that must be discarded whenever the quotation changes.
 GENERATED_OUTPUT_KEYS = (
@@ -529,15 +545,20 @@ def recalculate_quotation(lines: Iterable[dict[str, Any]]) -> dict[str, Any]:
                 "quantity": quantity,
                 "list_unit_price": list_unit_price,
                 "quotation_unit_price": quotation_unit_price,
-                "list_line_total": round(quantity * list_unit_price, 2),
-                "quotation_line_total": round(quantity * quotation_unit_price, 2),
+                "list_line_total": _round_money(
+                    Decimal(quantity) * Decimal(str(list_unit_price))
+                ),
+                "quotation_line_total": _round_money(
+                    Decimal(quantity) * Decimal(str(quotation_unit_price))
+                ),
             }
         )
 
-    list_total = round(sum(line["list_line_total"] for line in normalized_lines), 2)
-    quotation_total = round(
-        sum(line["quotation_line_total"] for line in normalized_lines),
-        2,
+    list_total = _round_money(
+        sum(Decimal(str(line["list_line_total"])) for line in normalized_lines)
+    )
+    quotation_total = _round_money(
+        sum(Decimal(str(line["quotation_line_total"])) for line in normalized_lines)
     )
     if list_total <= 0:
         errors.append("List Total must be greater than 0.")
@@ -565,9 +586,18 @@ def recalculate_quotation(lines: Iterable[dict[str, Any]]) -> dict[str, Any]:
 def calculate_discount_rate(list_total: float, quotation_total: float) -> float:
     if list_total <= 0:
         return 0.0
-    # Rounding to 6 decimals keeps float noise such as 0.35000000000000003 from
-    # pushing an exact 35% quotation over the approval threshold.
-    return round((list_total - quotation_total) / list_total, DISCOUNT_RATE_PRECISION)
+    # Decimal + rounding to 6 decimals keeps float noise such as
+    # 0.35000000000000003 from pushing an exact 35% quotation over the
+    # approval threshold.
+    try:
+        rate = (Decimal(str(list_total)) - Decimal(str(quotation_total))) / Decimal(
+            str(list_total)
+        )
+    except (InvalidOperation, ZeroDivisionError):
+        return 0.0
+    return float(
+        rate.quantize(Decimal(1).scaleb(-DISCOUNT_RATE_PRECISION), rounding=ROUND_HALF_UP)
+    )
 
 
 def get_discount_approval_status(discount_rate: float) -> str:
@@ -1285,7 +1315,9 @@ def _new_quotation_line(
         "description": description,
         "quantity": quantity,
         "list_unit_price": list_unit_price,
-        "quotation_unit_price": round(list_unit_price * (1 - discount_rate), 2),
+        "quotation_unit_price": _round_money(
+            Decimal(str(list_unit_price)) * (Decimal(1) - Decimal(str(discount_rate)))
+        ),
     }
 
 
@@ -1318,7 +1350,7 @@ def _coerce_money(
     if not minimum_is_valid:
         comparison = "0 or greater" if allow_zero else "greater than 0"
         errors.append(f"Line {index}: {label} must be {comparison}.")
-    return round(numeric, 2)
+    return _round_money(numeric)
 
 
 def _contains_alias(text: str, alias: str) -> bool:

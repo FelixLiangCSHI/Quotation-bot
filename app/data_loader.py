@@ -197,6 +197,25 @@ def load_merged_rules(path: str | Path | None = None) -> dict[str, Any]:
     return raw
 
 
+_MERGED_RULES_CACHE: dict[Path, tuple[float, dict[str, Any]]] = {}
+
+
+def load_merged_rules_cached(path: str | Path | None = None) -> dict[str, Any]:
+    """mtime-aware cache around :func:`load_merged_rules`.
+
+    Avoids re-reading the artifact on every API call while still picking up
+    file changes without a process restart.
+    """
+    rules_path = Path(path) if path else default_merged_rules_path()
+    mtime = rules_path.stat().st_mtime
+    cached = _MERGED_RULES_CACHE.get(rules_path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    raw = load_merged_rules(rules_path)
+    _MERGED_RULES_CACHE[rules_path] = (mtime, raw)
+    return raw
+
+
 def _parse_product(item: dict[str, Any]) -> Product:
     return Product(
         product_id=str(item.get("product_id", "")).strip(),
