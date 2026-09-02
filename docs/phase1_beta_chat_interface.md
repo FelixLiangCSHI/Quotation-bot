@@ -24,7 +24,7 @@ Phase 1 subphases (from the roadmap "What to do" list):
 |---:|---|---|
 | 01 | Build a local chat UI | **Done - re-verified on web frontend (Section 1)** |
 | 02 | Allow user to input a quote/configuration question | **Done - verified (Section 2)** |
-| 03 | Display extracted fields, validation result, and explanation | Pending |
+| 03 | Display extracted fields, validation result, and explanation | **Done - conversation-first agent cards (Section 3)** |
 | 04 | Use session state only for the current conversation | Pending |
 
 ## 1. Subphase 01 - Local Chat UI Baseline
@@ -81,3 +81,39 @@ The user can type a quote/configuration question in the web frontend chat input;
 
 - Verified end-to-end question input path: web chat input -> `POST /recommend` -> parsed fields -> answer.
 - Streamlit fully removed; conversation logic preserved and test-covered in `app/conversation.py`.
+
+## 3. Subphase 03 - Display Extracted Fields, Validation Result, and Explanation
+
+### Conclusion
+
+The frontend was redesigned so the **Agent 01 conversation is the core skeleton**: every agent reply now embeds a structured card directly in the chat feed showing (a) the extracted fields, (b) the rule-engine validation verdict, and (c) the full explanation. The evidence sidebar remains as a secondary reference; the conversation itself now carries the complete answer.
+
+### What was built
+
+| Requirement | Implementation | Evidence |
+|---|---|---|
+| Agent-card in each assistant chat turn | `createAgentCard(meta)` renders inside the chat message; chat feed enlarged as the page's core skeleton | `frontend/app.js` `renderChat()` / `createAgentCard()` |
+| Extracted fields displayed | Field chips: Region, System, Acquisition, Products, Keywords from `recommendation.request` | `buildRecommendationMeta()` `fields` |
+| Validation result displayed | Verdict badge `valid` (green) / `invalid` (red) / `incomplete` (amber) plus missing-field line and per-issue list (severity, code, message) from `recommendation.validation` - the `QuotationRuleEngine` output already carried by the API | `frontend/app.js`, `frontend/styles.css` `.verdict-*` |
+| Explanation displayed | Collapsible "Explanation" section with the full backend answer text (`render_recommendation_text`, which includes the rule-check wording) | `.agent-card-explanation` |
+| Persistence within session | Message `meta` is stored with the chat messages in the existing session store | `addMessage(role, text, meta)` |
+| Agent 01 branding | Chat role label renamed to "Agent 01"; page eyebrow updated | `frontend/index.html`, `renderChat()` |
+
+No backend change was required: `POST /recommend` already returns the extracted request fields, the `QuotationRuleEngine` validation result, and the explanation text. The rule engine remains the sole validation authority.
+
+### Verification performed (2026-09-02)
+
+| Check | Result |
+|---|---|
+| `POST /recommend` "I need a FMT digital X-ray system..." (region `us`) -> fields extracted (region/system/acquisition/keywords), status `valid` | Pass |
+| `POST /recommend` "Quote product 6703656 for the EU region" -> status `invalid` with `region_not_allowed` error issue | Pass |
+| Meta-builder logic executed against the live payload (Node) produces fields/status/explanation as rendered by the card | Pass |
+| Frontend serves HTTP 200; `app.js` module syntax valid | Pass |
+| Full test suite: 132 tests + 40 subtests | All pass |
+
+### Gaps carried to later subphases
+
+| Gap | Where it is closed |
+|---|---|
+| One-question-at-a-time missing-field dialogue (`app/conversation.py` planner) is not yet exposed through the web frontend flow | Phase 2 (LLM field extraction) / later Phase 1 iteration |
+| Session-state audit (frontend uses `localStorage` for conversation history - review against the "current conversation only" decision) | Subphase 04 |

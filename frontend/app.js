@@ -189,7 +189,8 @@ async function generateRecommendation(message) {
 
   addMessage(
     "assistant",
-    `Generated ${state.quoteItems.length} quote item(s). You can keep editing in this conversation, use row actions, or add one of the alternatives.`
+    `Generated ${state.quoteItems.length} quote item(s). You can keep editing in this conversation, use row actions, or add one of the alternatives.`,
+    buildRecommendationMeta(payload)
   );
   recordSnapshot(`Generated quote from: ${shortenText(message)}`);
 }
@@ -474,8 +475,33 @@ function restoreSnapshot(snapshotId) {
   renderSession();
 }
 
-function addMessage(role, text) {
-  state.messages.push({ role, text, at: new Date().toISOString() });
+function addMessage(role, text, meta) {
+  state.messages.push({ role, text, meta: meta || null, at: new Date().toISOString() });
+}
+
+function buildRecommendationMeta(payload) {
+  const recommendation = payload.recommendation || {};
+  const request = recommendation.request || {};
+  const validation = recommendation.validation || {};
+  return {
+    fields: {
+      region: request.region || null,
+      system_family: request.system_family || null,
+      acquisition_type: request.acquisition_type || null,
+      product_ids: request.product_ids || [],
+      keywords: (request.keywords || []).slice(0, 6),
+    },
+    validation: {
+      status: validation.status || "unknown",
+      missing_fields: validation.missing_fields || [],
+      issues: (validation.issues || []).map((issue) => ({
+        severity: issue.severity || "issue",
+        code: issue.code || "rule",
+        message: issue.message || "",
+      })),
+    },
+    explanation: payload.answer || "",
+  };
 }
 
 function renderSession() {
@@ -489,11 +515,80 @@ function renderChat() {
   for (const message of state.messages) {
     const node = document.createElement("article");
     node.className = `chat-message ${message.role}`;
-    node.appendChild(createElement("span", message.role === "user" ? "You" : "Assistant", "chat-role"));
+    node.appendChild(createElement("span", message.role === "user" ? "You" : "Agent 01", "chat-role"));
     node.appendChild(createElement("p", message.text));
+    if (message.role === "assistant" && message.meta) {
+      node.appendChild(createAgentCard(message.meta));
+    }
     elements.chatFeed.appendChild(node);
   }
   elements.chatFeed.scrollTop = elements.chatFeed.scrollHeight;
+}
+
+function createAgentCard(meta) {
+  const card = document.createElement("div");
+  card.className = "agent-card";
+
+  const fields = meta.fields || {};
+  const validation = meta.validation || {};
+
+  const header = document.createElement("div");
+  header.className = "agent-card-header";
+  header.appendChild(createElement("span", "Rule check", "agent-card-title"));
+  header.appendChild(
+    createElement("span", validation.status || "unknown", `verdict-badge verdict-${validation.status || "unknown"}`)
+  );
+  card.appendChild(header);
+
+  const chipRow = document.createElement("div");
+  chipRow.className = "field-chips";
+  const chipEntries = [
+    ["Region", fields.region],
+    ["System", fields.system_family],
+    ["Acquisition", fields.acquisition_type],
+    ["Products", (fields.product_ids || []).join(", ")],
+    ["Keywords", (fields.keywords || []).join(", ")],
+  ];
+  for (const [label, value] of chipEntries) {
+    if (!value) continue;
+    const chip = document.createElement("span");
+    chip.className = "field-chip";
+    chip.appendChild(createElement("strong", `${label}`));
+    chip.appendChild(document.createTextNode(` ${value}`));
+    chipRow.appendChild(chip);
+  }
+  if (chipRow.childElementCount) {
+    card.appendChild(createElement("p", "Extracted fields", "agent-card-label"));
+    card.appendChild(chipRow);
+  }
+
+  if ((validation.missing_fields || []).length) {
+    card.appendChild(
+      createElement("p", `Missing fields: ${validation.missing_fields.join(", ")}`, "agent-card-missing")
+    );
+  }
+
+  const issues = validation.issues || [];
+  if (issues.length) {
+    const issueList = document.createElement("ul");
+    issueList.className = "agent-card-issues";
+    for (const issue of issues.slice(0, 6)) {
+      issueList.appendChild(
+        createElement("li", `${(issue.severity || "issue").toUpperCase()} [${issue.code}] ${issue.message}`)
+      );
+    }
+    card.appendChild(issueList);
+  }
+
+  if (meta.explanation) {
+    const details = document.createElement("details");
+    details.className = "agent-card-explanation";
+    details.appendChild(createElement("summary", "Explanation"));
+    details.appendChild(createElement("p", meta.explanation));
+    card.appendChild(details);
+  }
+
+  return card;
 }
 
 function renderQuoteState() {
