@@ -89,6 +89,24 @@ Content-Type: application/json
 }
 ```
 
+Deterministic validation endpoint (Phase 3, see
+`docs/phase3_validation_authority.md`) - the rule engine is the validation
+authority; no LLM is involved:
+
+```http
+POST /validation/check
+Content-Type: application/json
+
+{
+  "message": "Can I quote product 6703656 for the EU?",
+  "fields": {"region": "us"}
+}
+```
+
+Returns `status` (valid / invalid / incomplete), issues with
+error/warning/info severity, missing fields, and rule artifact metadata.
+Explicit `fields` override values parsed from `message`.
+
 Reasoning-layer diagnostics (Phase 2, see `docs/phase2_reasoning_layer.md`):
 
 ```http
