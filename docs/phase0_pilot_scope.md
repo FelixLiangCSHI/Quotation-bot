@@ -60,7 +60,7 @@ Recommended first demo case (already covered by regression tests):
 | 2 | Most common quote questions (10-20 real cases + expected answers) | Sales / BDM / PLM | Pending |
 | 3 | Presentation / demo scope | Mentor / sponsor | Pending |
 | 4 | Azure OpenAI endpoint, deployment name, API version, auth, quota | IT / AI platform | Requested - see `docs/phase0_azure_openai_access_request.md` (Phase 0 / subphase 02) |
-| 5 | Data usage approval: may quote/product/rule data be sent to Azure OpenAI? | IT / security / data owner | Pending (Phase 0 / subphase 03) |
+| 5 | Data usage approval: may quote/product/rule data be sent to Azure OpenAI? | IT / security / data owner | Requested - see `docs/phase0_data_usage_approval.md` (Phase 0 / subphase 03) |
 | 6 | Demo runs locally, on internal server, or behind API gateway | IT | Pending (Phase 0 / subphase 04) |
 
 ## 7. Next Steps After Sign-off
