@@ -17,7 +17,9 @@ Sales conversation
 - Discount Rate > 35%: manager approval required
 
 The demo uses deterministic local matching and synthetic data.
-No external AI API, SAP connection, database or email service is required.
+No SAP connection, database or email service is required. An optional
+reasoning layer (enterprise DeepSeek-v4-pro, OpenAI-compatible) can be
+enabled via environment variables; without it the bot runs fully offline.
 
 ## Run the Demo
 
@@ -87,6 +89,16 @@ Content-Type: application/json
 }
 ```
 
+Reasoning-layer diagnostics (Phase 2, see `docs/phase2_reasoning_layer.md`):
+
+```http
+GET /llm/status
+```
+
+The reasoning layer is disabled by default. To enable it, set `LLM_API_BASE`
+and `LLM_API_KEY` (see `.env.example`). It is used only for field extraction
+and explanation wording - validation is always done by the rule engine.
+
 Development extras (test client, etc.) live in `requirements-full.txt`:
 
 ```bash
@@ -142,7 +154,8 @@ requirements-full.txt    Full dependencies including development extras
 ## Current Limitations
 
 - Recommendations are keyword-based, not true reasoning.
-- No external LLM or reasoning API is integrated.
+- The reasoning layer (DeepSeek-v4-pro) is integrated but disabled until
+  enterprise credentials are configured; it never overrides the rule engine.
 - Product, pricing and customer data in this repository is synthetic demo data.
 - Manager approval is simulated in the current browser session only; it is
   not a persisted approval workflow.

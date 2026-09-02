@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from app.llm import get_llm_client, reasoning_status
 from app.natural_language import parse_quote_request
 from app.recommender import QuoteRecommender, render_recommendation_text
 from app.serialization import to_jsonable
@@ -40,6 +41,7 @@ class RecommendRequest(BaseModel):
 class RecommendResponse(BaseModel):
     answer: str
     recommendation: dict[str, Any]
+    reasoning: dict[str, Any] = Field(default_factory=dict)
 
 
 app = FastAPI(title="Quotation Bot API", version="0.1.0")
@@ -68,6 +70,12 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/llm/status")
+def llm_status() -> dict[str, Any]:
+    """Diagnostics for the Phase 2 reasoning layer (DeepSeek-v4-pro slot)."""
+    return reasoning_status()
+
+
 @app.post("/recommend", response_model=RecommendResponse)
 def recommend(request: RecommendRequest) -> RecommendResponse:
     message = request.message.strip()
@@ -75,6 +83,7 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         raise HTTPException(status_code=422, detail="message cannot be blank")
 
     quote_request = parse_quote_request(message)
+    quote_request, llm_fields_used = _apply_llm_extraction(quote_request, message)
     region = _normalize_region(request.region)
     if region:
         quote_request = replace(quote_request, region=region)
@@ -83,10 +92,64 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
         quote_request,
         max_accessories=request.max_accessories,
     )
+    answer = render_recommendation_text(recommendation)
+    answer, llm_wording_used = _apply_llm_wording(answer, message)
     return RecommendResponse(
-        answer=render_recommendation_text(recommendation),
+        answer=answer,
         recommendation=to_jsonable(recommendation),
+        reasoning={
+            "llm_enabled": get_llm_client().enabled,
+            "llm_fields_used": llm_fields_used,
+            "llm_wording_used": llm_wording_used,
+            "validation_authority": "QuotationRuleEngine",
+        },
     )
+
+
+def _apply_llm_extraction(quote_request, message: str):
+    """Fill fields the deterministic parser missed using the LLM.
+
+    The LLM only supplements missing fields - deterministic extraction always
+    wins, and validation stays with the rule engine.
+    """
+    client = get_llm_client()
+    if not client.enabled:
+        return quote_request, False
+    needs_fields = not (
+        quote_request.region
+        and quote_request.system_family
+        and quote_request.acquisition_type
+    )
+    if not needs_fields:
+        return quote_request, False
+    fields = client.extract_fields(message)
+    if not fields:
+        return quote_request, False
+    updates: dict[str, Any] = {}
+    for key in ("region", "system_family", "acquisition_type"):
+        if getattr(quote_request, key) is None and fields.get(key):
+            updates[key] = fields[key]
+    extra_ids = tuple(
+        pid
+        for pid in fields.get("product_ids", ())
+        if pid not in quote_request.product_ids
+    )
+    if extra_ids:
+        updates["product_ids"] = quote_request.product_ids + extra_ids
+    if not updates:
+        return quote_request, False
+    return replace(quote_request, **updates), True
+
+
+def _apply_llm_wording(answer: str, message: str) -> tuple[str, bool]:
+    """Optionally polish answer wording; keep the deterministic text on failure."""
+    client = get_llm_client()
+    if not client.enabled:
+        return answer, False
+    polished = client.polish_explanation(answer, message)
+    if not polished:
+        return answer, False
+    return polished, True
 
 
 def _normalize_region(region: str | None) -> str | None:
