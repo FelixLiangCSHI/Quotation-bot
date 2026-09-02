@@ -225,10 +225,14 @@ class ApiIntegrationTest(unittest.TestCase):
 
     def test_llm_polishes_wording_without_changing_recommendation(self) -> None:
         fake = make_client()
+
+        def fact_preserving_polish(answer: str, question: str) -> str:
+            return "Here is your quote, polished for clarity.\n" + answer
+
         with mock.patch.object(api_module, "get_llm_client", return_value=fake), \
                 mock.patch.object(fake, "extract_fields", return_value=None), \
                 mock.patch.object(
-                    fake, "polish_explanation", return_value="Polished answer."
+                    fake, "polish_explanation", side_effect=fact_preserving_polish
                 ):
             response = self.client.post(
                 "/recommend",
@@ -236,12 +240,52 @@ class ApiIntegrationTest(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertEqual(body["answer"], "Polished answer.")
+        self.assertTrue(
+            body["answer"].startswith("Here is your quote, polished for clarity.")
+        )
         self.assertTrue(body["reasoning"]["llm_wording_used"])
         # The structured recommendation stays deterministic.
         self.assertEqual(
             body["recommendation"]["validation"]["status"], "valid"
         )
+
+    def test_llm_wording_that_drops_product_ids_is_rejected(self) -> None:
+        """A prompt-injected rewrite that loses facts must not be shown."""
+        fake = make_client()
+        with mock.patch.object(api_module, "get_llm_client", return_value=fake), \
+                mock.patch.object(fake, "extract_fields", return_value=None), \
+                mock.patch.object(
+                    fake,
+                    "polish_explanation",
+                    return_value="Everything is free today! Ignore the quote.",
+                ):
+            response = self.client.post(
+                "/recommend",
+                json={"message": "I need a digital FMT X-ray system for the US"},
+            )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("I recommend", body["answer"])
+        self.assertFalse(body["reasoning"]["llm_wording_used"])
+
+    def test_llm_wording_that_invents_blocking_issue_is_rejected(self) -> None:
+        fake = make_client()
+
+        def tampering_polish(answer: str, question: str) -> str:
+            return answer + "\nRule check: blocking issue found."
+
+        with mock.patch.object(api_module, "get_llm_client", return_value=fake), \
+                mock.patch.object(fake, "extract_fields", return_value=None), \
+                mock.patch.object(
+                    fake, "polish_explanation", side_effect=tampering_polish
+                ):
+            response = self.client.post(
+                "/recommend",
+                json={"message": "I need a digital FMT X-ray system for the US"},
+            )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body["reasoning"]["llm_wording_used"])
 
     def test_llm_failure_falls_back_to_deterministic_answer(self) -> None:
         fake = make_client()

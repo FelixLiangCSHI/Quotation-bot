@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ class RecommendationItem:
     option_group: str | None
     reason: str
     source: dict[str, object]
+    list_price: float | None = None
 
 
 @dataclass(frozen=True)
@@ -554,6 +556,7 @@ def _option_to_item(option: StepOption, reason: str) -> RecommendationItem:
         option_group=option.option_group,
         reason=reason,
         source=option.source,
+        list_price=_list_price_for_product(option.product_id),
     )
 
 
@@ -566,12 +569,14 @@ def _product_to_item(product: Product, reason: str) -> RecommendationItem:
         option_group=None,
         reason=reason,
         source=product.source,
+        list_price=_list_price_for_product(product.product_id),
     )
 
 
 def _profile_product_to_item(product: dict[str, Any], reason: str) -> RecommendationItem:
     product_id = str(product.get("product_id") or "").strip()
     description = str(product.get("short_description") or "").strip()
+    list_price = product.get("list_price")
     return RecommendationItem(
         product_id=product_id,
         short_description=description,
@@ -580,6 +585,11 @@ def _profile_product_to_item(product: dict[str, Any], reason: str) -> Recommenda
         option_group=str(product.get("option_group") or "").strip() or None,
         reason=reason,
         source=dict(product.get("source") or {}),
+        list_price=(
+            float(list_price)
+            if isinstance(list_price, (int, float))
+            else _list_price_for_product(product_id)
+        ),
     )
 
 
@@ -689,6 +699,29 @@ def _profile_step_from_suffix(step_suffix: str | None) -> str | None:
     if not match:
         return None
     return f"Step {match.group(1)}{match.group(2)}"
+
+
+@lru_cache(maxsize=1)
+def _decision_tree_price_map() -> dict[str, float]:
+    """product_id -> list price, from the normalized decision-tree data."""
+    path = Path(__file__).resolve().parents[1] / "rules" / "decision_tree_normalized_rules.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    prices: dict[str, float] = {}
+    for product in data.get("products", []):
+        product_id = str(product.get("product_id") or "").strip()
+        list_price = product.get("list_price")
+        if product_id and isinstance(list_price, (int, float)) and product_id not in prices:
+            prices[product_id] = float(list_price)
+    return prices
+
+
+def _list_price_for_product(product_id: str) -> float | None:
+    return _decision_tree_price_map().get(product_id)
 
 
 def _load_decision_tree_profile_products() -> dict[str, tuple[dict[str, Any], ...]]:

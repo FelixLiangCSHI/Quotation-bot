@@ -73,6 +73,15 @@ class LLMConfig:
         base_url = (
             os.getenv("LLM_API_BASE") or os.getenv("DEEPSEEK_API_BASE") or ""
         ).strip().rstrip("/")
+        if base_url and not base_url.startswith("https://"):
+            # Fail closed: never send the API key over plain HTTP or to a
+            # malformed endpoint. The reasoning layer stays disabled instead.
+            logger.warning(
+                "LLM_API_BASE must use https:// - reasoning layer disabled "
+                "(got %r)",
+                base_url,
+            )
+            base_url = ""
         api_key = (
             os.getenv("LLM_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or ""
         ).strip()

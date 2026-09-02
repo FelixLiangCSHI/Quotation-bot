@@ -1,18 +1,42 @@
 from __future__ import annotations
 
+import logging
+import os
+import re
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from functools import lru_cache
-from typing import Any
+from pathlib import Path
+from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.llm import get_llm_client, reasoning_status
-from app.data_loader import load_merged_rules
+from app.data_loader import load_merged_rules_cached
 from app.natural_language import parse_quote_request
 from app.recommender import QuoteRecommender, render_recommendation_text
 from app.serialization import to_jsonable
+
+logger = logging.getLogger(__name__)
+
+MAX_MESSAGE_LENGTH = 4000
+MAX_PRODUCT_IDS = 100
+
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+)
+
+PRODUCT_ID_FRAGMENT_RE = re.compile(r"\d{7}")
+MONEY_FRAGMENT_RE = re.compile(r"\d[\d,]*\.\d{2}")
+
+ProductId = Annotated[str, StringConstraints(min_length=1, max_length=40)]
+ShortText = Annotated[str, StringConstraints(min_length=1, max_length=100)]
 
 
 REGION_VALUES = {
@@ -34,7 +58,7 @@ REGION_VALUES = {
 
 
 class RecommendRequest(BaseModel):
-    message: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_LENGTH)
     region: str | None = Field(default=None, min_length=1, max_length=30)
     max_accessories: int | None = Field(default=None, ge=1, le=200)
 
@@ -48,19 +72,19 @@ class RecommendResponse(BaseModel):
 class ValidationFields(BaseModel):
     """Structured validation input matching QuotationRuleEngine.check_configuration."""
 
-    product_ids: list[str] = Field(default_factory=list)
-    region: str | None = None
-    system_family: str | None = None
-    acquisition_type: str | None = None
-    tube_stand_id: str | None = None
-    wallstand_id: str | None = None
-    table_id: str | None = None
-    grid_id: str | None = None
-    grid_position: str | None = None
-    detector_type: str | None = None
-    generator: str | None = None
-    tube_spec: str | None = None
-    spec_category: str | None = None
+    product_ids: list[ProductId] = Field(default_factory=list, max_length=MAX_PRODUCT_IDS)
+    region: ShortText | None = None
+    system_family: ShortText | None = None
+    acquisition_type: ShortText | None = None
+    tube_stand_id: ShortText | None = None
+    wallstand_id: ShortText | None = None
+    table_id: ShortText | None = None
+    grid_id: ShortText | None = None
+    grid_position: ShortText | None = None
+    detector_type: ShortText | None = None
+    generator: ShortText | None = None
+    tube_spec: ShortText | None = None
+    spec_category: ShortText | None = None
 
 
 class ValidationCheckRequest(BaseModel):
@@ -71,7 +95,7 @@ class ValidationCheckRequest(BaseModel):
     values parsed from the message.
     """
 
-    message: str | None = Field(default=None, max_length=4000)
+    message: str | None = Field(default=None, max_length=MAX_MESSAGE_LENGTH)
     fields: ValidationFields | None = None
 
 
@@ -85,20 +109,65 @@ class ValidationCheckResponse(BaseModel):
     validation_authority: str = "QuotationRuleEngine"
 
 
-app = FastAPI(title="Quotation Bot API", version="0.1.0")
+def _cors_origins() -> list[str]:
+    """CORS allowlist, overridable for deployment via QUOTATION_CORS_ORIGINS."""
+    raw = os.getenv("QUOTATION_CORS_ORIGINS", "")
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origins or list(DEFAULT_CORS_ORIGINS)
+
+
+def _include_sources() -> bool:
+    """Whether internal source provenance is exposed in API responses.
+
+    Defaults to on for the Beta demo; set QUOTATION_INCLUDE_SOURCES=0 for
+    enterprise deployments to strip workbook/sheet/cell metadata.
+    """
+    return os.getenv("QUOTATION_INCLUDE_SOURCES", "1").strip().casefold() not in (
+        "0",
+        "false",
+        "no",
+    )
+
+
+def _strip_sources(value: Any) -> Any:
+    """Recursively remove ``source`` provenance objects from a response."""
+    if isinstance(value, dict):
+        return {
+            key: _strip_sources(item)
+            for key, item in value.items()
+            if key != "source"
+        }
+    if isinstance(value, list):
+        return [_strip_sources(item) for item in value]
+    return value
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Load data artifacts at startup so broken files fail fast, not lazily."""
+    artifacts = get_rule_artifacts()
+    logger.info(
+        "Quotation Bot API started: %d products, %d rule signals, %d confirmed rules",
+        artifacts["quotation_snapshot"]["products"],
+        artifacts["quotation_snapshot"]["rule_signals"],
+        artifacts["merged_rules"]["confirmed_rule_count"],
+    )
+    yield
+
+
+app = FastAPI(title="Quotation Bot API", version="0.1.0", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+if _FRONTEND_DIR.is_dir():
+    app.mount("/ui", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="ui")
 
 
 @lru_cache(maxsize=1)
@@ -110,7 +179,7 @@ def get_recommender() -> QuoteRecommender:
 def get_rule_artifacts() -> dict[str, Any]:
     """Metadata about the loaded data + rule artifacts (Phase 3 subphase 02)."""
     snapshot = get_recommender().snapshot
-    merged = load_merged_rules()
+    merged = load_merged_rules_cached()
     return {
         "quotation_snapshot": {
             "products": len(snapshot.products_by_id),
@@ -125,6 +194,12 @@ def get_rule_artifacts() -> dict[str, Any]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    """Liveness + readiness: verifies the data artifacts actually load."""
+    try:
+        get_rule_artifacts()
+    except Exception as exc:  # pragma: no cover - only on broken data files
+        logger.error("Health check failed to load data artifacts: %s", exc)
+        raise HTTPException(status_code=503, detail="data artifacts unavailable")
     return {"status": "ok"}
 
 
@@ -142,7 +217,7 @@ def data_sources() -> dict[str, Any]:
     files - no database, search index, or vector store is involved.
     """
     snapshot = get_recommender().snapshot
-    merged = load_merged_rules()
+    merged = load_merged_rules_cached()
     metadata = snapshot.raw.get("metadata", {})
     return {
         "storage": "file-based (JSON + Markdown)",
@@ -188,9 +263,12 @@ def recommend(request: RecommendRequest) -> RecommendResponse:
     )
     answer = render_recommendation_text(recommendation)
     answer, llm_wording_used = _apply_llm_wording(answer, message)
+    recommendation_payload = to_jsonable(recommendation)
+    if not _include_sources():
+        recommendation_payload = _strip_sources(recommendation_payload)
     return RecommendResponse(
         answer=answer,
-        recommendation=to_jsonable(recommendation),
+        recommendation=recommendation_payload,
         reasoning={
             "llm_enabled": get_llm_client().enabled,
             "llm_fields_used": llm_fields_used,
@@ -218,6 +296,8 @@ def validation_check(request: ValidationCheckRequest) -> ValidationCheckResponse
         )
     result = get_recommender().engine.check_configuration(**resolved)
     issues = [to_jsonable(issue) for issue in result.issues]
+    if not _include_sources():
+        issues = [_strip_sources(issue) for issue in issues]
     summary = {
         "errors": sum(1 for issue in result.issues if issue.severity == "error"),
         "warnings": sum(1 for issue in result.issues if issue.severity == "warning"),
@@ -325,14 +405,41 @@ def _apply_llm_extraction(quote_request, message: str):
 
 
 def _apply_llm_wording(answer: str, message: str) -> tuple[str, bool]:
-    """Optionally polish answer wording; keep the deterministic text on failure."""
+    """Optionally polish answer wording; keep the deterministic text on failure.
+
+    The polished text is treated as untrusted: it is only accepted when every
+    product ID, price, and the validation verdict from the deterministic
+    answer are preserved (guards against prompt-injected rewrites).
+    """
     client = get_llm_client()
     if not client.enabled:
         return answer, False
     polished = client.polish_explanation(answer, message)
     if not polished:
         return answer, False
+    if not _polish_preserves_facts(answer, polished):
+        logger.warning(
+            "LLM-polished answer dropped or altered facts; keeping deterministic text"
+        )
+        return answer, False
     return polished, True
+
+
+def _polish_preserves_facts(original: str, polished: str) -> bool:
+    """True when ``polished`` keeps all critical facts from ``original``."""
+    for product_id in set(PRODUCT_ID_FRAGMENT_RE.findall(original)):
+        if product_id not in polished:
+            return False
+    for amount in set(MONEY_FRAGMENT_RE.findall(original)):
+        if amount not in polished:
+            return False
+    original_blocking = "blocking issue found" in original.casefold()
+    polished_blocking = "blocking" in polished.casefold()
+    if original_blocking and not polished_blocking:
+        return False
+    if not original_blocking and "blocking issue found" in polished.casefold():
+        return False
+    return True
 
 
 def _normalize_region(region: str | None) -> str | None:

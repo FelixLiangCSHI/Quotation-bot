@@ -76,6 +76,27 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(422, response.status_code)
 
+    def test_recommend_rejects_oversized_message(self):
+        response = self.client.post("/recommend", json={"message": "x" * 4001})
+
+        self.assertEqual(422, response.status_code)
+
+    def test_validation_check_rejects_too_many_product_ids(self):
+        response = self.client.post(
+            "/validation/check",
+            json={"fields": {"product_ids": [f"{index:07d}" for index in range(101)]}},
+        )
+
+        self.assertEqual(422, response.status_code)
+
+    def test_validation_check_rejects_oversized_product_id(self):
+        response = self.client.post(
+            "/validation/check",
+            json={"fields": {"product_ids": ["x" * 41]}},
+        )
+
+        self.assertEqual(422, response.status_code)
+
 
 if __name__ == "__main__":
     unittest.main()

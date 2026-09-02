@@ -70,6 +70,7 @@ GENERATOR_SPEC_CATEGORY_ALIASES = {
 class QuotationRuleEngine:
     def __init__(self, snapshot: QuotationSnapshot) -> None:
         self.snapshot = snapshot
+        self.decision_tree_rules_by_product = _load_decision_tree_region_rules()
         self.known_product_ids = set(snapshot.products_by_id) | _load_decision_tree_product_ids()
 
     def check_configuration(
@@ -145,6 +146,10 @@ class QuotationRuleEngine:
             if product and normalized_region:
                 issues.extend(
                     self._check_product_region_rules(product_id, normalized_region)
+                )
+            elif normalized_region and product_id in self.decision_tree_rules_by_product:
+                issues.extend(
+                    self._check_decision_tree_region_rules(product_id, normalized_region)
                 )
 
         if provided_compatibility_fields:
@@ -227,6 +232,47 @@ class QuotationRuleEngine:
                     message=(
                         f"Product {product_id} is limited to "
                         f"{', '.join(sorted(allowed_regions))}: {rule.message}"
+                    ),
+                    product_id=product_id,
+                    rule_id=rule.rule_id,
+                    source=rule.source,
+                )
+            )
+        return issues
+
+    def _check_decision_tree_region_rules(
+        self, product_id: str, normalized_region: str
+    ) -> list[ValidationIssue]:
+        """Region validation for products known only through decision-tree rules.
+
+        Decision-tree-only products are not in the snapshot rule index, so
+        their normalized ``region_allow`` / ``region_block`` rules are checked
+        here instead of being silently skipped.
+        """
+        issues: list[ValidationIssue] = []
+        seen_rules: set[tuple[str, tuple[str, ...], str]] = set()
+        for rule in self.decision_tree_rules_by_product.get(product_id, ()):
+            allowed = {_normalize_region(region) for region in rule.regions}
+            if not allowed:
+                continue
+            if rule.rule_type == "region_block":
+                violated = normalized_region in allowed
+                limit_text = f"blocked in {', '.join(sorted(allowed))}"
+            else:
+                violated = normalized_region not in allowed
+                limit_text = f"limited to {', '.join(sorted(allowed))}"
+            if not violated:
+                continue
+            dedupe_key = (product_id, tuple(sorted(allowed)), rule.message)
+            if dedupe_key in seen_rules:
+                continue
+            seen_rules.add(dedupe_key)
+            issues.append(
+                ValidationIssue(
+                    severity="error" if rule.strength == "hard_block" else "warning",
+                    code="region_not_allowed",
+                    message=(
+                        f"Product {product_id} is {limit_text}: {rule.message}"
                     ),
                     product_id=product_id,
                     rule_id=rule.rule_id,
@@ -413,15 +459,53 @@ def _normalize_generator_spec_category(spec_category: str) -> str:
 
 
 def _load_decision_tree_product_ids() -> set[str]:
-    path = Path(__file__).resolve().parents[1] / "rules" / "decision_tree_normalized_rules.json"
-    if not path.exists():
-        return set()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return set()
+    data = _load_decision_tree_data()
     return {
         str(product.get("product_id") or "").strip()
         for product in data.get("products", [])
         if str(product.get("product_id") or "").strip()
     }
+
+
+def _load_decision_tree_region_rules() -> dict[str, tuple[RuleSignal, ...]]:
+    """Index normalized decision-tree region rules by product id."""
+    data = _load_decision_tree_data()
+    grouped: dict[str, list[RuleSignal]] = {}
+    for rule in data.get("rules", []):
+        rule_type = str(rule.get("type") or "").strip()
+        if rule_type not in ("region_allow", "region_block"):
+            continue
+        product_id = str(rule.get("product_id") or "").strip()
+        regions = tuple(
+            str(region).strip() for region in rule.get("regions", []) if region
+        )
+        if not product_id or not regions:
+            continue
+        grouped.setdefault(product_id, []).append(
+            RuleSignal(
+                rule_id=str(rule.get("id") or "").strip(),
+                product_id=product_id,
+                step_id=str(rule.get("step_id") or "").strip() or None,
+                applies_to_step_id=None,
+                rule_type=rule_type,
+                strength=str(rule.get("effect") or "unknown").strip(),
+                review_status=str(rule.get("review_status") or "needs_review").strip(),
+                confidence=float(rule.get("confidence") or 0),
+                condition_text="",
+                message=str(rule.get("message") or "").strip(),
+                regions=regions,
+                source=dict(rule.get("source") or {}),
+            )
+        )
+    return {product_id: tuple(rules) for product_id, rules in grouped.items()}
+
+
+def _load_decision_tree_data() -> dict:
+    path = Path(__file__).resolve().parents[1] / "rules" / "decision_tree_normalized_rules.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
