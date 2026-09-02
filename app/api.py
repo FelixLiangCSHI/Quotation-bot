@@ -134,6 +134,42 @@ def llm_status() -> dict[str, Any]:
     return reasoning_status()
 
 
+@app.get("/data/sources")
+def data_sources() -> dict[str, Any]:
+    """File-based data provenance (Phase 4: keep Beta data simple).
+
+    The Beta version reads all product and rule data directly from JSON
+    files - no database, search index, or vector store is involved.
+    """
+    snapshot = get_recommender().snapshot
+    merged = load_merged_rules()
+    metadata = snapshot.raw.get("metadata", {})
+    return {
+        "storage": "file-based (JSON + Markdown)",
+        "database": None,
+        "search_index": None,
+        "vector_index": None,
+        "sources": {
+            "quotation_snapshot.json": {
+                "role": "product/data source",
+                "snapshot_version": metadata.get("snapshot_version"),
+                "generated_at": metadata.get("generated_at"),
+                "source_file": metadata.get("source_file"),
+                "products": len(snapshot.products_by_id),
+                "rule_signals": len(snapshot.rule_signals),
+            },
+            "rules/merged_rules.json": {
+                "role": "confirmed rule artifact",
+                "confirmed_rule_count": merged.get("confirmed_rule_count"),
+                "human_approved_rule_count": merged.get("human_approved_rule_count"),
+            },
+            "docs/*.md": {
+                "role": "implementation notes and workflow explanation",
+            },
+        },
+    }
+
+
 @app.post("/recommend", response_model=RecommendResponse)
 def recommend(request: RecommendRequest) -> RecommendResponse:
     message = request.message.strip()

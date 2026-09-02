@@ -113,6 +113,14 @@ Reasoning-layer diagnostics (Phase 2, see `docs/phase2_reasoning_layer.md`):
 GET /llm/status
 ```
 
+Data provenance (Phase 4, see `docs/phase4_data_simplicity.md`) - the Beta
+version is file-based (JSON + Markdown), with no database, search index, or
+vector store:
+
+```http
+GET /data/sources
+```
+
 The reasoning layer is disabled by default. To enable it, set `LLM_API_BASE`
 and `LLM_API_KEY` (see `.env.example`). It is used only for field extraction
 and explanation wording - validation is always done by the rule engine.
