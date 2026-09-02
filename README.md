@@ -89,8 +89,7 @@ Content-Type: application/json
 }
 ```
 
-Deterministic validation endpoint (Phase 3, see
-`docs/phase3_validation_authority.md`) - the rule engine is the validation
+Deterministic validation endpoint (Phase 3) - the rule engine is the validation
 authority; no LLM is involved:
 
 ```http
@@ -107,13 +106,13 @@ Returns `status` (valid / invalid / incomplete), issues with
 error/warning/info severity, missing fields, and rule artifact metadata.
 Explicit `fields` override values parsed from `message`.
 
-Reasoning-layer diagnostics (Phase 2, see `docs/phase2_reasoning_layer.md`):
+Reasoning-layer diagnostics (Phase 2):
 
 ```http
 GET /llm/status
 ```
 
-Data provenance (Phase 4, see `docs/phase4_data_simplicity.md`) - the Beta
+Data provenance (Phase 4) - the Beta
 version is file-based (JSON + Markdown), with no database, search index, or
 vector store:
 
