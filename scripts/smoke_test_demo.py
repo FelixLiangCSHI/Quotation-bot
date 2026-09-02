@@ -1,7 +1,7 @@
-"""Headless verification of the Streamlit demo business flow.
+"""Headless verification of the demo business flow.
 
 The script never starts a browser or a network call. It exercises the same
-functions the Streamlit page uses so a broken demo is detected before a
+functions the demo frontend flow uses so a broken demo is detected before a
 presentation.
 
 Usage:

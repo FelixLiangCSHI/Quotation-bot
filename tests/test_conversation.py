@@ -1,8 +1,7 @@
-"""Tests for the Streamlit presentation helpers and free-input fallbacks.
+"""Tests for the conversation-flow helpers and free-input fallbacks.
 
-These tests only exercise pure helper functions, so no Streamlit runtime is
-required. The multi-turn flows reuse the same core functions that the
-Streamlit callbacks use.
+These tests only exercise pure helper functions in app.conversation, so no
+UI runtime is required.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from app.quotation import (
 from app.recommender import QuoteRecommender
 from app.serialization import to_jsonable
 
-import streamlit_app
+from app import conversation
 
 
 RECOMMENDER = QuoteRecommender()
@@ -28,10 +27,10 @@ RECOMMENDER = QuoteRecommender()
 
 def advance(configuration: dict, turns: list[str], prompt: str) -> dict:
     """Replay one conversation turn exactly like ``_process_prompt`` does."""
-    if streamlit_app.is_low_information_prompt(prompt):
+    if conversation.is_low_information_prompt(prompt):
         return {
             "configuration": configuration,
-            "reply": streamlit_app.LOW_INFORMATION_REPLY,
+            "reply": conversation.LOW_INFORMATION_REPLY,
             "quick_replies": (),
             "ready": False,
             "totals": None,
@@ -46,8 +45,8 @@ def advance(configuration: dict, turns: list[str], prompt: str) -> dict:
         conversation_text,
         recommendation,
     )
-    merged, blocked = streamlit_app.guard_unsupported_product(merged)
-    plan = streamlit_app.plan_next_reply(merged, blocked)
+    merged, blocked = conversation.guard_unsupported_product(merged)
+    plan = conversation.plan_next_reply(merged, blocked)
     totals = None
     if plan["ready"]:
         totals = recalculate_quotation(build_quotation_lines(merged))
@@ -72,35 +71,35 @@ class LowInformationPromptTests(unittest.TestCase):
             "start",
         ):
             with self.subTest(prompt=prompt):
-                self.assertTrue(streamlit_app.is_low_information_prompt(prompt))
+                self.assertTrue(conversation.is_low_information_prompt(prompt))
 
     def test_normal_sales_request_is_not_low_information(self) -> None:
         self.assertFalse(
-            streamlit_app.is_low_information_prompt(
+            conversation.is_low_information_prompt(
                 "ABC Hospital in Singapore needs two DRX Compass systems."
             )
         )
         self.assertFalse(
-            streamlit_app.is_low_information_prompt("We need a DRX Compass.")
+            conversation.is_low_information_prompt("We need a DRX Compass.")
         )
 
 
 class MissingQuestionTests(unittest.TestCase):
     def test_next_missing_question_returns_one_question(self) -> None:
-        question = streamlit_app.next_missing_question({})
+        question = conversation.next_missing_question({})
         self.assertIsInstance(question, str)
         self.assertEqual(question.count("?"), 1)
 
     def test_customer_question_is_first(self) -> None:
         self.assertEqual(
-            streamlit_app.next_missing_question({}),
-            streamlit_app.FIELD_QUESTIONS["customer_name"],
+            conversation.next_missing_question({}),
+            conversation.FIELD_QUESTIONS["customer_name"],
         )
 
     def test_region_question_follows_customer(self) -> None:
         self.assertEqual(
-            streamlit_app.next_missing_question({"customer_name": "Test Hospital"}),
-            streamlit_app.FIELD_QUESTIONS["region"],
+            conversation.next_missing_question({"customer_name": "Test Hospital"}),
+            conversation.FIELD_QUESTIONS["region"],
         )
 
     def test_discount_question_is_last(self) -> None:
@@ -112,23 +111,23 @@ class MissingQuestionTests(unittest.TestCase):
             "configuration_description": "1 x DRX Compass",
         }
         self.assertEqual(
-            streamlit_app.next_missing_question(configuration),
-            streamlit_app.FIELD_QUESTIONS["discount_rate"],
+            conversation.next_missing_question(configuration),
+            conversation.FIELD_QUESTIONS["discount_rate"],
         )
         configuration["discount_rate"] = 0.3
-        self.assertIsNone(streamlit_app.next_missing_question(configuration))
+        self.assertIsNone(conversation.next_missing_question(configuration))
 
     def test_quick_replies_use_natural_language(self) -> None:
         self.assertEqual(
-            streamlit_app.quick_reply_prompt("currency", "USD"),
+            conversation.quick_reply_prompt("currency", "USD"),
             "Use USD.",
         )
         self.assertEqual(
-            streamlit_app.quick_reply_prompt("main_product", "DRX Compass"),
+            conversation.quick_reply_prompt("main_product", "DRX Compass"),
             "Use DRX Compass.",
         )
         self.assertEqual(
-            streamlit_app.quick_reply_prompt("discount_rate", "30%"),
+            conversation.quick_reply_prompt("discount_rate", "30%"),
             "Apply a 30% discount.",
         )
 
@@ -155,7 +154,7 @@ class SupportedProductTests(unittest.TestCase):
         )
 
     def test_guard_removes_unsupported_product(self) -> None:
-        configuration, blocked = streamlit_app.guard_unsupported_product(
+        configuration, blocked = conversation.guard_unsupported_product(
             {
                 "customer_name": "Test Hospital",
                 "main_product": "CT Scanner",
@@ -170,13 +169,13 @@ class SupportedProductTests(unittest.TestCase):
 
 class WorkflowStageTests(unittest.TestCase):
     def test_stage_progresses_with_state(self) -> None:
-        self.assertEqual(streamlit_app.workflow_stage({}), "Requirements")
+        self.assertEqual(conversation.workflow_stage({}), "Requirements")
         self.assertEqual(
-            streamlit_app.workflow_stage({"configuration": {"customer_name": "A"}}),
+            conversation.workflow_stage({"configuration": {"customer_name": "A"}}),
             "Configuration",
         )
         self.assertEqual(
-            streamlit_app.workflow_stage(
+            conversation.workflow_stage(
                 {
                     "configuration": {"customer_name": "A"},
                     "quotation_lines": [{"product_code": "DRX-COMPASS"}],
@@ -187,7 +186,7 @@ class WorkflowStageTests(unittest.TestCase):
             "Quotation",
         )
         self.assertEqual(
-            streamlit_app.workflow_stage(
+            conversation.workflow_stage(
                 {
                     "configuration": {"customer_name": "A"},
                     "quotation_lines": [{"product_code": "DRX-COMPASS"}],
@@ -206,24 +205,24 @@ class FreeInputFlowTests(unittest.TestCase):
 
         turn = advance(configuration, turns, "I want to try.")
         self.assertFalse(turn["ready"])
-        self.assertEqual(turn["reply"], streamlit_app.LOW_INFORMATION_REPLY)
+        self.assertEqual(turn["reply"], conversation.LOW_INFORMATION_REPLY)
         self.assertIsNone(turn["totals"])
         self.assertEqual(turns, [])
 
         turn = advance(configuration, turns, "The customer is Test Hospital.")
         configuration = turn["configuration"]
         self.assertEqual(configuration["customer_name"], "Test Hospital")
-        self.assertIn(streamlit_app.FIELD_QUESTIONS["region"], turn["reply"])
+        self.assertIn(conversation.FIELD_QUESTIONS["region"], turn["reply"])
         self.assertIsNone(turn["totals"])
 
         turn = advance(configuration, turns, "Use Singapore.")
         configuration = turn["configuration"]
         self.assertEqual(configuration["region"], "Singapore")
         self.assertIn(
-            streamlit_app.next_missing_question(configuration),
+            conversation.next_missing_question(configuration),
             (
-                streamlit_app.FIELD_QUESTIONS["currency"],
-                streamlit_app.FIELD_QUESTIONS["main_product"],
+                conversation.FIELD_QUESTIONS["currency"],
+                conversation.FIELD_QUESTIONS["main_product"],
             ),
         )
         self.assertIsNone(turn["totals"])
@@ -243,7 +242,7 @@ class FreeInputFlowTests(unittest.TestCase):
             if item["name"] == "Wireless Detector"
         ]
         self.assertEqual(detectors[0]["quantity"], 2)
-        self.assertIn(streamlit_app.FIELD_QUESTIONS["discount_rate"], turn["reply"])
+        self.assertIn(conversation.FIELD_QUESTIONS["discount_rate"], turn["reply"])
         self.assertIsNone(turn["totals"])
 
         turn = advance(configuration, turns, "30%.")
@@ -267,7 +266,7 @@ class FreeInputFlowTests(unittest.TestCase):
                 MANAGER_NOT_SUBMITTED,
             )
         )
-        summary = streamlit_app.build_conversation_summary(configuration, totals)
+        summary = conversation.build_conversation_summary(configuration, totals)
         self.assertIn("Test Hospital", summary)
         self.assertIn("30%", summary)
 
@@ -283,10 +282,10 @@ class FreeInputFlowTests(unittest.TestCase):
         self.assertFalse(turn["ready"])
         self.assertIsNone(turn["totals"])
         self.assertEqual(configuration["main_product"], "")
-        self.assertEqual(turn["reply"], streamlit_app.UNSUPPORTED_PRODUCT_MESSAGE)
+        self.assertEqual(turn["reply"], conversation.UNSUPPORTED_PRODUCT_MESSAGE)
         self.assertEqual(
             tuple(turn["quick_replies"]),
-            streamlit_app.MAIN_PRODUCT_OPTIONS,
+            conversation.MAIN_PRODUCT_OPTIONS,
         )
         with self.assertRaises(QuotationValidationError):
             build_quotation_lines(configuration)

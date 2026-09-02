@@ -183,6 +183,20 @@ def load_snapshot(path: str | Path | None = None) -> QuotationSnapshot:
     return QuotationSnapshot(raw)
 
 
+def default_merged_rules_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "rules" / "merged_rules.json"
+
+
+def load_merged_rules(path: str | Path | None = None) -> dict[str, Any]:
+    """Load the confirmed rule artifact (``rules/merged_rules.json``)."""
+    rules_path = Path(path) if path else default_merged_rules_path()
+    with rules_path.open("r", encoding="utf-8") as rules_file:
+        raw = json.load(rules_file)
+    if not isinstance(raw, dict) or not isinstance(raw.get("rules"), list):
+        raise ValueError("Merged rules root must be a JSON object with a 'rules' list.")
+    return raw
+
+
 def _parse_product(item: dict[str, Any]) -> Product:
     return Product(
         product_id=str(item.get("product_id", "")).strip(),

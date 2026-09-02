@@ -25,8 +25,6 @@ ENV/
 .env.*
 !.env.example
 
-# Streamlit
-.streamlit/secrets.toml
 
 # OS files
 .DS_Store
