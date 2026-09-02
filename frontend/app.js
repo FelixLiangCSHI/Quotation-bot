@@ -815,8 +815,13 @@ function showError(message) {
 }
 
 function restoreSession() {
+  // Session-only memory (Phase 1 / subphase 04): conversation state lives in
+  // sessionStorage so it survives reloads within the current browser session
+  // but is discarded when the session ends. Any legacy cross-session entry in
+  // localStorage is removed so no history persists between sessions.
+  localStorage.removeItem(STORAGE_KEY);
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+    const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "null");
     if (saved && typeof saved === "object") {
       state.currentRecommendation = saved.currentRecommendation || null;
       state.quoteItems = Array.isArray(saved.quoteItems) ? saved.quoteItems : [];
@@ -835,12 +840,12 @@ function restoreSession() {
       state.isEdited = Boolean(saved.isEdited);
     }
   } catch (error) {
-    localStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STORAGE_KEY);
   }
 }
 
 function persistSession() {
-  localStorage.setItem(
+  sessionStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
       currentRecommendation: state.currentRecommendation,

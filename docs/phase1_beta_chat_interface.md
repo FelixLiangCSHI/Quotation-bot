@@ -25,7 +25,7 @@ Phase 1 subphases (from the roadmap "What to do" list):
 | 01 | Build a local chat UI | **Done - re-verified on web frontend (Section 1)** |
 | 02 | Allow user to input a quote/configuration question | **Done - verified (Section 2)** |
 | 03 | Display extracted fields, validation result, and explanation | **Done - conversation-first agent cards (Section 3)** |
-| 04 | Use session state only for the current conversation | Pending |
+| 04 | Use session state only for the current conversation | **Done - sessionStorage-only memory (Section 4)** |
 
 ## 1. Subphase 01 - Local Chat UI Baseline
 
@@ -117,3 +117,39 @@ No backend change was required: `POST /recommend` already returns the extracted 
 |---|---|
 | One-question-at-a-time missing-field dialogue (`app/conversation.py` planner) is not yet exposed through the web frontend flow | Phase 2 (LLM field extraction) / later Phase 1 iteration |
 | Session-state audit (frontend uses `localStorage` for conversation history - review against the "current conversation only" decision) | Subphase 04 |
+
+## 4. Subphase 04 - Session State Only for the Current Conversation
+
+### Conclusion
+
+Conversation memory is now strictly session-scoped. The frontend previously persisted the full conversation (messages, quote items, history) in `localStorage`, which survives across browser sessions - this conflicted with the roadmap decision ("Reset or export session after the demo. Avoid storing long-term chat history until IT/security approves retention policy") and the Phase 0 data boundary ("Chat history retention: no long-term storage; session memory only").
+
+### What was changed
+
+| Change | Detail |
+|---|---|
+| `localStorage` -> `sessionStorage` | `persistSession()` / `restoreSession()` now use `sessionStorage`: state survives reloads within the current browser session but is discarded when the session ends |
+| Legacy cleanup | `restoreSession()` removes any pre-existing `localStorage` entry on load, so no history from earlier versions persists across sessions |
+| Manual reset retained | The "Clear session" button still wipes the current session immediately |
+
+Backend audit: the FastAPI service (`app/api.py`) is stateless per request (no server-side session or chat-history storage), so no backend change was needed.
+
+### Verification performed (2026-09-02)
+
+| Check | Result |
+|---|---|
+| Legacy `localStorage` entry is deleted on load (mocked-storage Node test) | Pass |
+| No cross-session messages are restored after cleanup | Pass |
+| In-session restore from `sessionStorage` still works (messages + region) | Pass |
+| No `localStorage` writes remain in `frontend/app.js` | Pass |
+| Full test suite: 132 tests + 40 subtests | All pass |
+
+### Phase 1 Completion Note
+
+All four Phase 1 subphases are complete: local chat UI (web frontend + FastAPI), quote-question input, in-conversation display of extracted fields / validation verdict / explanation, and session-only conversation memory. Next roadmap step: **Phase 2 - connect the Azure OpenAI reasoning layer** (blocked on Phase 0 subphase 02/03 IT sign-offs), and **Phase 3/6 - expose `POST /validation/check`**.
+
+### Remaining gap
+
+| Gap | Where it is closed |
+|---|---|
+| One-question-at-a-time missing-field dialogue (`app/conversation.py` planner) is not yet exposed through the web frontend flow | Phase 2 (LLM field extraction) / later iteration |
