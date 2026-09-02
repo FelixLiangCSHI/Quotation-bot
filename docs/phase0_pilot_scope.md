@@ -19,7 +19,7 @@ Recommended first demo case (already covered by regression tests):
 | Product families | DRX-Compass **FMT** (192 products) and **OTC** (188 products) from `quotation_snapshot.json` |
 | Validation types | Product region limits, system compatibility, detector/grid support, generator/tube specs (all implemented in `QuotationRuleEngine`) |
 | Rule artifact | `rules/merged_rules.json` (700 confirmed executable rules) |
-| Frontend | Local Streamlit demo (`streamlit_app.py`), single session, current-conversation memory only |
+| Frontend | Local static web frontend (`frontend/`) + FastAPI backend (`app/api.py`), single session, current-conversation memory only (UI decision updated 2026-09-02: Streamlit retired) |
 | Data source | File-based: `quotation_snapshot.json` + `rules/merged_rules.json` (one snapshot version per demo) |
 | Outputs | Extracted fields, validation result (valid / invalid / incomplete), warnings, human-readable explanation, editable quotation preview |
 

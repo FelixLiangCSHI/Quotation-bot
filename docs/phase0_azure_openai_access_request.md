@@ -19,7 +19,7 @@ Confirm the Azure OpenAI endpoint and model access needed for the Beta pilot. Th
 | 5 | Quota / rate limit | n/a | Tokens-per-minute and requests-per-minute for the deployment | Pending |
 | 6 | Network access path | n/a | Public endpoint, private endpoint, or via API gateway | Pending |
 
-Preferred authentication: **Entra ID / managed identity** where available; API key only as fallback, stored in `.env` (gitignored) or Streamlit `secrets.toml` (gitignored).
+Preferred authentication: **Entra ID / managed identity** where available; API key only as fallback, stored in `.env` (gitignored).
 
 ## 3. Intended Usage Scope (for the approval request)
 
@@ -34,7 +34,6 @@ Preferred authentication: **Entra ID / managed identity** where available; API k
 ## 4. Configuration Convention in This Repository
 
 - Local configuration lives in `.env` (gitignored). A template is provided at `.env.example` with placeholders only.
-- Streamlit deployments may alternatively use `.streamlit/secrets.toml` (gitignored).
 - No endpoint, key, or deployment name is ever committed to the repository.
 
 ## 5. Verification Steps (once access is granted)

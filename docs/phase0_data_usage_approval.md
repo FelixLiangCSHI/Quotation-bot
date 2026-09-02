@@ -16,7 +16,7 @@ Confirm whether quotation, product, and rule data may be sent to Azure OpenAI, a
 | `quotation_snapshot.json` - matrices | Compatibility (590), detector/grid (33), generator/tube (69) relationships | 692 rows | Internal engineering compatibility data |
 | `quotation_snapshot.json` - rule signals | 984 extracted rule signals incl. 206 free-text constraints | 984 | Free text may embed internal business reasoning |
 | `rules/merged_rules.json` | 700 confirmed executable rules | 700 | Structured, derived from the above |
-| Demo pricing in `app/quotation.py` | List unit prices used by the Streamlit demo | ~10 items | **Synthetic demo data** per README ("Product, pricing and customer data in this repository is synthetic demo data") |
+| Demo pricing in `app/quotation.py` | List unit prices used by the demo | ~10 items | **Synthetic demo data** per README ("Product, pricing and customer data in this repository is synthetic demo data") |
 | User chat input | Sales quote questions typed during the pilot | Ad hoc | May mention customer names, regions, deal context |
 
 ## 3. Proposed LLM Data Boundary (what is / is not sent)

@@ -12,7 +12,7 @@ Decide where the first demo runs: **locally**, on an **internal server**, or **b
 
 | Component | How it runs today |
 |---|---|
-| Streamlit demo (`streamlit_app.py`) | `streamlit run streamlit_app.py` on a laptop; also deployable to Streamlit Community Cloud (public SaaS) |
+| Static web frontend (`frontend/`) | `python -m http.server 5173` on a laptop; calls the local FastAPI backend (UI decision updated 2026-09-02: Streamlit retired) |
 | FastAPI service (`app/api.py`) | `python -m uvicorn app.api:app --host 127.0.0.1 --port 8000` (localhost only; CORS limited to localhost origins) |
 | Data | Local files only (`quotation_snapshot.json`, `rules/merged_rules.json`); no database, no external services |
 | Azure OpenAI | Not yet connected (pending subphases 02/03 approvals) |
@@ -29,13 +29,13 @@ Decide where the first demo runs: **locally**, on an **internal server**, or **b
 | Fits roadmap phase | Phase 0-1 (Beta demo) | Phase 6 pilot (multi-user) | Phase 6-7 (production APIs) |
 | Risk | Lowest | Low | Deferred until API contract exists |
 
-### Streamlit Community Cloud caution
+### Public SaaS hosting caution
 
-`streamlit_app.py` currently supports Streamlit Community Cloud deployment. That is a **public SaaS host outside company control**. Under the Phase 0 data boundary, Community Cloud must **not** be used for any demo that connects to Azure OpenAI or uses non-synthetic company data. It remains acceptable only for the fully synthetic offline demo already in the README.
+Under the Phase 0 data boundary, public SaaS hosting (e.g. Streamlit Community Cloud, public static hosts) must **not** be used for any demo that connects to Azure OpenAI or uses non-synthetic company data. The demo frontend and backend both run locally.
 
 ## 4. Recommendation
 
-> **Option A - run the first demo locally** on the presenter's laptop (Streamlit UI + localhost FastAPI + local JSON files), with Azure OpenAI as the only outbound call once subphases 02/03 are approved.
+> **Option A - run the first demo locally** on the presenter's laptop (local web frontend + localhost FastAPI + local JSON files), with Azure OpenAI as the only outbound call once subphases 02/03 are approved.
 
 Reasons:
 
@@ -58,7 +58,7 @@ Reasons:
 |---:|---|---|
 | 1 | Confirm a locally run demo (laptop, screen share) is acceptable for the first presentation | Pending |
 | 2 | Confirm outbound HTTPS from the presenter's laptop to the approved Azure OpenAI endpoint is allowed | Pending |
-| 3 | Confirm Streamlit Community Cloud is prohibited once real data or Azure OpenAI is connected | Pending |
+| 3 | Confirm public SaaS hosting is prohibited once real data or Azure OpenAI is connected | Pending |
 | 4 | Identify the internal server/VM option to reserve for the Phase 6 pilot (name/owner only, no build yet) | Pending |
 
 ## 7. Deliverable Status

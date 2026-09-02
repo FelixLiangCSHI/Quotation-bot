@@ -1,54 +1,83 @@
 # Phase 1 - Beta Chat Interface Execution Log
 
-Date: 2026-09-02
+Date: 2026-09-02 (updated same day: UI decision changed - Streamlit retired)
 Source references: `docs/quotation_bot_mvp_vs_production_architecture.md` (Phase 1), `docs/phase0_pilot_scope.md`, `docs/phase0_run_location_decision.md`.
+
+## UI Decision Change (2026-09-02)
+
+Per project owner instruction, **Streamlit is retired** as the Beta frontend. The Beta UI is now the **static web frontend** (`frontend/`: `index.html`, `app.js`, `styles.css`) backed by the **FastAPI service** (`app/api.py`). All Streamlit code, configuration, and dependencies were removed from the repository. The Streamlit-free conversation-flow logic (one-question-at-a-time planner, quick replies, unsupported-product guard, workflow stages) was preserved in `app/conversation.py` and remains fully test-covered.
+
+Removal summary:
+
+| Removed | Replacement |
+|---|---|
+| `streamlit_app.py` (UI layer) | `frontend/` web UI + `app/api.py` FastAPI backend |
+| Conversation logic embedded in `streamlit_app.py` | Extracted to `app/conversation.py` (no UI dependency) |
+| `.streamlit/config.toml` | n/a |
+| `tests/test_streamlit_presentation.py` | Renamed `tests/test_conversation.py`, importing `app.conversation` |
+| `streamlit` in `requirements*.txt` | `fastapi` + `uvicorn` in `requirements.txt` |
+| README Streamlit run instructions | FastAPI + static frontend run instructions |
 
 Phase 1 subphases (from the roadmap "What to do" list):
 
 | Subphase | Item | Status |
 |---:|---|---|
-| 01 | Build a local chat UI | **Done - verified baseline (this document, Section 1)** |
-| 02 | Allow user to input a quote/configuration question | Pending |
+| 01 | Build a local chat UI | **Done - re-verified on web frontend (Section 1)** |
+| 02 | Allow user to input a quote/configuration question | **Done - verified (Section 2)** |
 | 03 | Display extracted fields, validation result, and explanation | Pending |
 | 04 | Use session state only for the current conversation | Pending |
 
-## 1. Subphase 01 - Local Chat UI Baseline Verification
+## 1. Subphase 01 - Local Chat UI Baseline
 
 ### Conclusion
 
-A working local chat UI already exists in `streamlit_app.py`. Subphase 01 is satisfied by **verifying this baseline** rather than building a new UI, per the minimal-change principle and the Phase 0 decision to run the demo locally.
+A working local chat UI exists: the static web frontend (`frontend/`) with chat feed, message input, quick actions, and conversation history, talking to the local FastAPI backend.
+
+### Verification performed (2026-09-02, after Streamlit removal)
+
+| Check | Result |
+|---|---|
+| `python -m uvicorn app.api:app --host 127.0.0.1 --port 8000` starts; `GET /health` returns `{"status": "ok"}` | Pass |
+| `python -m http.server 5173` serves `frontend/` with HTTP 200 | Pass |
+| Frontend wires `#messageInput` + `#sendButton` (and Enter key) to the backend | Pass (`frontend/app.js`) |
+| Full test suite after Streamlit removal: 132 tests + 40 subtests | All pass |
+
+## 2. Subphase 02 - User Can Input a Quote/Configuration Question
+
+### Conclusion
+
+The user can type a quote/configuration question in the web frontend chat input; it is sent as `POST /recommend` to the FastAPI backend, parsed, matched against the local catalog, and answered.
 
 ### What exists
 
 | Requirement | Implementation | Evidence |
 |---|---|---|
-| Local chat UI | Streamlit single-page app, conversation-first layout | `streamlit_app.py` (`main()`, `_render_conversation()`) |
-| Chat input box | `st.chat_input("Describe the customer requirement...")` | `streamlit_app.py` `main()` |
-| Conversation rendering | Message history rendered via chat messages | `_render_conversation()` |
-| Session-scoped state | `st.session_state` for messages, configuration, quotation lines, approval status | `initialize_demo_state()` / `reset_demo_state()` |
-| New-conversation reset | Sidebar "New quotation" button resets session state | `_render_sidebar()` |
-| Workflow progress display | Sidebar stage tracker (Conversation -> Configuration -> Quotation -> Approval) | `workflow_stage()` |
-| Local run (Phase 0 decision) | `streamlit run streamlit_app.py`, no external services | README "Run the Demo" |
+| Free-text question input | Chat input box + send button + Enter key in `frontend/app.js` | `#messageInput`, `sendButton` handlers |
+| Question transport | `POST /recommend` with `message` (and optional `region`, `max_accessories`) | `app/api.py` `RecommendRequest` |
+| Question parsing | `parse_quote_request()` extracts intent/fields deterministically | `app/natural_language.py` |
+| Region selection | Frontend region dropdown mapped to normalized regions | `frontend/app.js` `regionSelect`, `app/api.py` `REGION_VALUES` |
+| Sample/standard-config prompts | Sample button + standard config buttons (Compass / Rise / Revolution / Evolution) | `frontend/app.js` `STANDARD_CONFIGS` |
+| Follow-up edit commands | add/remove commands in English and Chinese | `frontend/app.js` `ADD_COMMANDS` / `REMOVE_COMMANDS` |
+| Blank-input rejection | HTTP 422 `message cannot be blank` | `app/api.py` `recommend()` |
 
 ### Verification performed (2026-09-02)
 
 | Check | Result |
 |---|---|
-| `streamlit run streamlit_app.py --server.headless true` starts and serves HTTP 200 on localhost | Pass |
-| UI regression tests (`tests/test_streamlit_presentation.py`) | Pass |
-| Baseline demo case tests (`tests/test_compass_otc_chest.py`, prompt "I Need a compass OTC fit best chest examination") | Pass |
-| Combined: 45 tests + 29 subtests | All pass |
-| Full suite (132 tests + 40 subtests) previously verified during Phase 0 quality check | All pass |
+| `POST /recommend` with "I need a FMT digital X-ray system with Focus detector, wall stand, and table." + region `us` returns main model + accessories | Pass |
+| `POST /recommend` with baseline demo case "I Need a compass OTC fit best chest examination" returns OTC profile answer | Pass |
+| API contract tests (`tests/test_api.py`) | Pass |
+| Conversation-flow question logic (`tests/test_conversation.py`, `tests/test_compass_otc_chest.py`) | Pass |
 
 ### Gaps carried to later subphases
 
 | Gap | Where it is closed |
 |---|---|
-| Chat input accepts requirements but the flow is recommender-centric; quote/configuration *validation questions* are not yet first-class | Subphase 02 |
-| Extracted fields are shown via configuration summary, but **rule-engine validation results (valid / invalid / incomplete) and explanations are not displayed** - `QuotationRuleEngine` is not yet wired into the UI | Subphase 03 |
-| Session-state audit (confirm nothing persists across sessions; export/reset behavior) | Subphase 04 |
+| Extracted fields are used internally but not surfaced explicitly; **rule-engine validation results (valid / invalid / incomplete) and explanations are not returned or displayed** - `QuotationRuleEngine` is not yet wired into the API/UI | Subphase 03 |
+| One-question-at-a-time missing-field dialogue (`app/conversation.py` planner) is not yet exposed through the web frontend flow | Subphase 03 |
+| Session-state audit (frontend uses `localStorage` for conversation history - review against the "current conversation only" decision) | Subphase 04 |
 
 ### Deliverable
 
-- Verified, runnable local chat UI baseline (no code change required for subphase 01).
-- This execution log tracking Phase 1 progress.
+- Verified end-to-end question input path: web chat input -> `POST /recommend` -> parsed fields -> answer.
+- Streamlit fully removed; conversation logic preserved and test-covered in `app/conversation.py`.

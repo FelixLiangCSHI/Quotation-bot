@@ -2,7 +2,7 @@
 
 The tests replay the exact wording used in the presentation, including the
 free-form opening sentence "I Need a compass OTC fit best chest examination".
-They only call the existing core functions, so no Streamlit runtime, network
+They only call the existing core functions, so no UI runtime, network
 call or external service is required.
 """
 
@@ -33,7 +33,7 @@ from app.quotation import (
 from app.recommender import QuoteRecommender
 from app.serialization import to_jsonable
 
-import streamlit_app
+from app import conversation
 
 
 LEADER_PROMPT = "I Need a compass OTC fit best chest examination"
@@ -59,7 +59,7 @@ def _configure(text: str) -> dict:
 
 
 def _advance(configuration: dict, turns: list[str], prompt: str) -> dict:
-    """Replay one Streamlit conversation turn without a Streamlit runtime."""
+    """Replay one conversation turn without any UI runtime."""
     turns.append(prompt)
     conversation_text = "\n".join(turns)
     recommendation = to_jsonable(RECOMMENDER.recommend_from_text(conversation_text))
@@ -69,8 +69,8 @@ def _advance(configuration: dict, turns: list[str], prompt: str) -> dict:
         conversation_text,
         recommendation,
     )
-    merged, blocked = streamlit_app.guard_unsupported_product(merged)
-    plan = streamlit_app.plan_next_reply(merged, blocked)
+    merged, blocked = conversation.guard_unsupported_product(merged)
+    plan = conversation.plan_next_reply(merged, blocked)
     totals = None
     if plan["ready"]:
         totals = recalculate_quotation(build_quotation_lines(merged))
@@ -134,7 +134,7 @@ class LeaderFirstTurnTests(unittest.TestCase):
     def test_next_question_is_the_customer_name(self) -> None:
         self.assertEqual("customer_name", self.result["plan"]["field"])
         self.assertIn(
-            streamlit_app.FIELD_QUESTIONS["customer_name"],
+            conversation.FIELD_QUESTIONS["customer_name"],
             self.result["plan"]["reply"],
         )
 
@@ -234,7 +234,7 @@ class SingleMessageRequestTests(unittest.TestCase):
         self.totals = recalculate_quotation(build_quotation_lines(self.configuration))
 
     def test_quotation_is_generated_immediately(self) -> None:
-        self.assertIsNone(streamlit_app.next_missing_field(self.configuration))
+        self.assertIsNone(conversation.next_missing_field(self.configuration))
         self.assertEqual(4, len(self.totals["lines"]))
         self.assertEqual(AUTO_APPROVED, self.totals["approval_status"])
 

@@ -1,6 +1,7 @@
 # AI Quotation Assistant Demo
 
-A single-page offline Streamlit demonstration for sales quotation preparation.
+An offline demonstration for sales quotation preparation with a static web
+frontend (`frontend/`) backed by a local FastAPI service (`app/api.py`).
 
 ## Demo Flow
 
@@ -20,29 +21,22 @@ No external AI API, SAP connection, database or email service is required.
 
 ## Run the Demo
 
+Start the FastAPI backend:
+
 ```bash
 pip install -r requirements.txt
-streamlit run streamlit_app.py
+python -m uvicorn app.api:app --host 127.0.0.1 --port 8000
 ```
 
-`streamlit_app.py` is also the Streamlit Community Cloud entry point.
+Serve the static web frontend in a second terminal:
 
-## Page Layout
+```bash
+cd frontend
+python -m http.server 5173 --bind 127.0.0.1
+```
 
-The main page is conversation-first and renders vertically:
-
-1. Header
-2. Sales conversation workspace (full width)
-3. Chat input
-4. Contextual quick replies
-5. Configuration summary
-6. Quotation preview (full width, editable Quantity and Quotation Unit Price)
-7. Discount approval
-8. Output actions
-
-The expanded sidebar holds the workspace controls: `New quotation`, the
-workflow progress (Requirements → Configuration → Quotation → Approval), the
-current draft summary, collapsed example requests and the system scope.
+Open `http://127.0.0.1:5173`. The frontend calls the backend at
+`http://127.0.0.1:8000`.
 
 ## Free Input Handling
 
@@ -50,16 +44,16 @@ current draft summary, collapsed example requests and the system scope.
   noisy recommendation.
 - Missing information is requested one question at a time: customer, region,
   currency, main product and then discount rate.
-- Quick reply buttons are converted to natural language and sent through the
-  normal parser.
+- Quick replies are converted to natural language and sent through the
+  normal parser (see `app/conversation.py`).
 - Products outside the supported price book (DRX Compass, DRX Revolution,
   DRX Rise) never produce a quotation; the assistant asks the presenter to
   pick a supported system instead.
 
 ## Example Requests
 
-Three neutral scenarios are available in the collapsed `Example requests`
-section of the sidebar and behave exactly like typed user input:
+Three neutral scenarios are defined in `app/conversation.py`
+(`EXAMPLE_REQUESTS`) and behave exactly like typed user input:
 
 - Hospital room upgrade
 - Mobile imaging requirement
@@ -69,29 +63,18 @@ section of the sidebar and behave exactly like typed user input:
 
 ```bash
 python -m unittest discover -v
-python -m compileall app streamlit_app.py
+python -m compileall app
 python scripts/smoke_test_demo.py
 ```
 
-`tests/test_streamlit_presentation.py` covers the presentation helpers and the
+`tests/test_conversation.py` covers the conversation helpers and the
 multi-turn free-input flows without starting a browser.
 `scripts/smoke_test_demo.py` verifies Demo A, Demo B and the "per system"
 quantity scenario without starting a browser.
 
 ---
 
-## Legacy Components
-
-These components are kept for reference and are **not** required by the
-Streamlit demo. Legacy API dependencies are stored separately in
-`requirements-full.txt` and are not required for the Streamlit demo.
-
-### FastAPI Backend
-
-```bash
-python -m pip install -r requirements-full.txt
-python -m uvicorn app.api:app --host 127.0.0.1 --port 8000
-```
+## API
 
 Recommendation endpoint:
 
@@ -104,15 +87,11 @@ Content-Type: application/json
 }
 ```
 
-### Static Frontend
+Development extras (test client, etc.) live in `requirements-full.txt`:
 
 ```bash
-cd frontend
-python -m http.server 5173 --bind 127.0.0.1
+python -m pip install -r requirements-full.txt
 ```
-
-Open `http://127.0.0.1:5173`. The frontend calls the backend at
-`http://127.0.0.1:8000`.
 
 ### CLI
 
@@ -149,17 +128,15 @@ reasonableness, and escalation policy. Roadmap and architecture notes live in
 ## Project Structure
 
 ```text
-app/                     Core Python application code
-frontend/                Legacy static web frontend
+app/                     Core Python application code (incl. FastAPI service)
+frontend/                Static web frontend (Beta UI)
 rules/                   Rule assets
 docs/                    Project documentation
 scripts/                 Demo smoke test, export and presentation scripts
 tests/                   Unit tests
 quotation_snapshot.json  Synthetic product snapshot used by the demo
-requirements.txt         Streamlit demo dependencies
-requirements-full.txt    Full dependencies including the legacy FastAPI stack
-streamlit_app.py         Streamlit demo entry point
-.streamlit/config.toml   Streamlit theme configuration
+requirements.txt         Runtime dependencies (FastAPI backend)
+requirements-full.txt    Full dependencies including development extras
 ```
 
 ## Current Limitations
@@ -167,5 +144,5 @@ streamlit_app.py         Streamlit demo entry point
 - Recommendations are keyword-based, not true reasoning.
 - No external LLM or reasoning API is integrated.
 - Product, pricing and customer data in this repository is synthetic demo data.
-- Manager approval is simulated in Streamlit session state only; it is not a
-  persisted approval workflow.
+- Manager approval is simulated in the current browser session only; it is
+  not a persisted approval workflow.
