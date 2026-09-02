@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import re
 import urllib.request
 from pathlib import Path
@@ -226,6 +227,12 @@ def main() -> None:
 
 
 def render_mermaid_images() -> list[Path]:
+    if os.getenv("ALLOW_EXTERNAL_MERMAID_RENDER", "").strip().casefold() not in ("1", "true", "yes"):
+        raise RuntimeError(
+            "Rendering Mermaid diagrams sends internal architecture content to "
+            "the external mermaid.ink service. Set ALLOW_EXTERNAL_MERMAID_RENDER=1 "
+            "to explicitly opt in, or render the diagrams locally."
+        )
     markdown = MARKDOWN_PATH.read_text(encoding="utf-8")
     blocks = re.findall(r"```mermaid\s*(.*?)```", markdown, flags=re.S)
     if len(blocks) < 2:
@@ -238,7 +245,7 @@ def render_mermaid_images() -> list[Path]:
         url = f"https://mermaid.ink/img/{encoded}?type=png&bgColor=white"
         image_path = MERMAID_IMAGE_DIR / f"roadmap_mermaid_{index}.png"
         request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             image_path.write_bytes(response.read())
         image_paths.append(image_path)
     return image_paths

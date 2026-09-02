@@ -1,6 +1,6 @@
 # 企业级部署 Gap Summary(Phase 0–4 → Production)
 
-日期:2026-09-02
+日期:2026-09-02(更新:第一节"现在能改"清单已全部实施完成,见各表状态列)
 范围:基于 Phase 00–04(MVP 阶段)代码评审结果,梳理当前本地 / GitHub 环境与企业级服务器部署之间的差距。
 分类原则:
 
@@ -51,6 +51,25 @@
 |---|-----|------|
 | E1 | 缺少"LLM 篡改关键事实应被拒绝"的测试 | 用现有 mock LLM 添加 prompt-injection / 事实保持测试 |
 | E2 | 缺少输入边界(超长 message、超大 product_ids 列表)的 API 测试 | 配合 B1/B2 一起补 |
+
+
+### 实施状态(2026-09-02)
+
+第一节所有条目已实施完成:
+
+- ✅ A1 决策树区域规则旁路已修复(`rule_engine.py` 现在索引并校验 `region_allow`/`region_block` 决策树规则,附回归测试)
+- ✅ A2 金额计算改用 `Decimal` 半进位舍入(`_round_money`、`calculate_discount_rate`)
+- ✅ B1/B2 `/recommend` message 上限 4000,`product_ids` 上限 100 条 / 每条 40 字符
+- ✅ B3 `LLM_API_BASE` 强制 HTTPS,非法配置 fail-closed 禁用推理层
+- ✅ B4 LLM 润色文本后验(产品 ID / 价格 / 验证结论缺失即回退确定性文本)
+- ✅ C1/C2 启动 eager load + `/health` 就绪校验 + 结构化日志
+- ✅ C3 `merged_rules.json` mtime 感知缓存
+- ✅ C4 `QUOTATION_INCLUDE_SOURCES=0` 可剥离 source 溯源元数据(Beta 默认保留)
+- ✅ C5 Dockerfile + .dockerignore(非 root 用户、healthcheck)
+- ✅ D1 前端 API base 可配置(`window.QUOTATION_API_BASE` → 同源 → localhost 回退),FastAPI 挂载 `/ui` 静态前端
+- ✅ D2 sessionStorage 截断(100 条消息 / 50 条历史)+ 配额异常处理;fetch 先判断状态再解析
+- ✅ D3 mermaid.ink 外发需 `ALLOW_EXTERNAL_MERMAID_RENDER=1` 显式 opt-in,加 30s 超时
+- ✅ E1/E2 新增 prompt-injection 拒绝测试、输入边界测试、决策树区域校验测试
 
 ---
 

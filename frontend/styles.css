@@ -559,20 +559,9 @@ button:disabled {
   border-bottom: 0;
 }
 
-.quote-table .qty {
-  width: 64px;
-  text-align: center;
-  font-weight: 800;
-}
-
 .quote-table .cat {
   width: 132px;
   font-weight: 800;
-}
-
-.quote-table .step {
-  width: 130px;
-  color: var(--muted);
 }
 
 .quote-table .description {
@@ -584,21 +573,11 @@ button:disabled {
   margin-bottom: 4px;
 }
 
-.quote-table .actions {
-  width: 112px;
-  position: sticky;
-  right: 0;
-  z-index: 2;
-  background: var(--surface);
-  box-shadow: -10px 0 16px rgba(23, 32, 46, 0.08);
-}
-
-.quote-table th:last-child {
-  position: sticky;
-  right: 0;
-  z-index: 3;
-  background: #17324d;
-  box-shadow: -10px 0 16px rgba(23, 32, 46, 0.16);
+.quote-table .price {
+  width: 120px;
+  text-align: right;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .table-action,

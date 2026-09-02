@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.example
+__pycache__
+*.pyc
+tests
+docs
+scripts
+Dockerfile
+.dockerignore
+README.md
+requirements-full.txt

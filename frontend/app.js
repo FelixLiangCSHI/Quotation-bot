@@ -1,5 +1,14 @@
-const API_BASE_URL = "http://127.0.0.1:8000";
+// API base resolution (deployment-friendly):
+// 1. window.QUOTATION_API_BASE (inject via a config script at deploy time)
+// 2. same origin when the page is served over http(s), e.g. FastAPI /ui mount
+// 3. local development fallback
+const API_BASE_URL = (
+  window.QUOTATION_API_BASE ||
+  (window.location.protocol.startsWith("http") ? window.location.origin : "http://127.0.0.1:8000")
+).replace(/\/+$/, "");
 const STORAGE_KEY = "quotationBot.conversation.v1";
+const MAX_STORED_MESSAGES = 100;
+const MAX_STORED_HISTORY = 50;
 const SAMPLE_REQUEST =
   "I need a FMT digital X-ray system with Focus detector, wall stand, and table.";
 const LEGACY_WELCOME_MESSAGE =
@@ -146,7 +155,7 @@ async function checkApiHealth() {
   } catch (error) {
     elements.apiState.textContent = "API offline";
     elements.apiState.className = "api-state error";
-    showError("FastAPI is not reachable at http://127.0.0.1:8000.");
+    showError(`FastAPI is not reachable at ${API_BASE_URL}.`);
   }
 }
 
@@ -189,7 +198,7 @@ async function generateRecommendation(message) {
 
   addMessage(
     "assistant",
-    `Generated ${state.quoteItems.length} quote item(s). You can keep editing in this conversation, use row actions, or add one of the alternatives.`,
+    `Generated ${state.quoteItems.length} quote item(s). You can keep editing in this conversation (for example "remove 8620148") or add one of the alternatives.`,
     buildRecommendationMeta(payload)
   );
   recordSnapshot(`Generated quote from: ${shortenText(message)}`);
@@ -291,28 +300,23 @@ function addCandidateFromButton(item) {
   renderSession();
 }
 
-function removeItemByKey(itemKey) {
-  const item = state.quoteItems.find((quoteItem) => getItemKey(quoteItem) === itemKey);
-  if (!item) {
-    return;
-  }
-  state.quoteItems = state.quoteItems.filter((quoteItem) => getItemKey(quoteItem) !== itemKey);
-  state.isEdited = true;
-  addMessage("assistant", `Removed ${formatItemName(item)}.`);
-  recordSnapshot(`Removed ${formatItemName(item)}`);
-  persistSession();
-  renderSession();
-}
-
 async function requestRecommendation(message) {
   const response = await fetch(`${API_BASE_URL}/recommend`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, region: state.region }),
   });
-  const payload = await response.json();
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
   if (!response.ok) {
-    throw new Error(payload.detail || `Request failed with ${response.status}`);
+    throw new Error((payload && payload.detail) || `Request failed with ${response.status}`);
+  }
+  if (!payload) {
+    throw new Error("The server returned an unreadable response.");
   }
   return payload;
 }
@@ -390,6 +394,7 @@ function normalizeQuoteItem(item, role) {
     quantity: item.quantity || 1,
     step_id: item.step_id || "-",
     option_group: item.option_group || null,
+    list_price: typeof item.list_price === "number" ? item.list_price : null,
     reason: item.reason || "",
     source: item.source || {},
     quote_role: role || item.quote_role || "Option",
@@ -731,21 +736,13 @@ function renderHistory() {
 }
 
 function createQuoteRow(item) {
+  // Sales-facing configuration view: only #CAT, Description, and Price.
   const row = document.createElement("tr");
-  row.appendChild(createTableCell(formatQuantity(item.quantity), "qty"));
   row.appendChild(createTableCell(item.product_id || "-", "cat"));
   const description = createTableCell("", "description");
   description.appendChild(createElement("strong", item.short_description || "Unnamed option"));
-  description.appendChild(createElement("span", item.quote_role || "Option", "row-note"));
   row.appendChild(description);
-  row.appendChild(createTableCell(item.step_id || "-", "step"));
-
-  const actionCell = createTableCell("", "actions");
-  const removeButton = createElement("button", "Remove", "table-action");
-  removeButton.type = "button";
-  removeButton.addEventListener("click", () => removeItemByKey(getItemKey(item)));
-  actionCell.appendChild(removeButton);
-  row.appendChild(actionCell);
+  row.appendChild(createTableCell(formatPrice(item.list_price), "price"));
   return row;
 }
 
@@ -769,6 +766,17 @@ function formatQuantity(quantity) {
     return String(numericQuantity);
   }
   return "1";
+}
+
+function formatPrice(price) {
+  const numericPrice = Number(price);
+  if (price === null || price === undefined || !Number.isFinite(numericPrice)) {
+    return "-";
+  }
+  return numericPrice.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function formatItemName(item) {
@@ -845,19 +853,29 @@ function restoreSession() {
 }
 
 function persistSession() {
-  sessionStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      currentRecommendation: state.currentRecommendation,
-      quoteItems: state.quoteItems,
-      candidateItems: state.candidateItems,
-      messages: state.messages,
-      history: state.history,
-      baseRequestText: state.baseRequestText,
-      region: state.region,
-      isEdited: state.isEdited,
-    })
-  );
+  // Cap stored conversation size so long sessions cannot exceed the
+  // sessionStorage quota; drop the heavy history first if writing fails.
+  state.messages = state.messages.slice(-MAX_STORED_MESSAGES);
+  state.history = state.history.slice(-MAX_STORED_HISTORY);
+  const snapshot = {
+    currentRecommendation: state.currentRecommendation,
+    quoteItems: state.quoteItems,
+    candidateItems: state.candidateItems,
+    messages: state.messages,
+    history: state.history,
+    baseRequestText: state.baseRequestText,
+    region: state.region,
+    isEdited: state.isEdited,
+  };
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+  } catch (error) {
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ ...snapshot, history: [] }));
+    } catch (retryError) {
+      sessionStorage.removeItem(STORAGE_KEY);
+    }
+  }
 }
 
 function resetSession() {

@@ -194,5 +194,41 @@ class RuleEngineTests(unittest.TestCase):
         )
 
 
+class DecisionTreeRegionRuleTests(unittest.TestCase):
+    """Decision-tree-only products must not bypass region validation."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = QuotationRuleEngine(load_snapshot())
+
+    def test_region_blocked_decision_tree_product_is_invalid(self):
+        # 6708937 carries a decision-tree region_block rule for china.
+        result = self.engine.check_configuration(["6708937"], region="china")
+
+        self.assertEqual("invalid", result.status)
+        self.assertTrue(
+            any(issue.code == "region_not_allowed" for issue in result.issues)
+        )
+
+    def test_region_blocked_decision_tree_product_is_valid_elsewhere(self):
+        result = self.engine.check_configuration(["6708937"], region="us")
+
+        self.assertEqual("valid", result.status)
+
+    def test_region_allow_decision_tree_product_outside_region_is_invalid(self):
+        # 8618928 is a decision-tree region_allow (china only) product.
+        result = self.engine.check_configuration(["8618928"], region="us")
+
+        self.assertEqual("invalid", result.status)
+        self.assertTrue(
+            any(issue.code == "region_not_allowed" for issue in result.issues)
+        )
+
+    def test_region_allow_decision_tree_product_inside_region_is_valid(self):
+        result = self.engine.check_configuration(["8618928"], region="china")
+
+        self.assertEqual("valid", result.status)
+
+
 if __name__ == "__main__":
     unittest.main()
